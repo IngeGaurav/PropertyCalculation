@@ -1,0 +1,4 @@
+-r requirements.txt
+# Only needed to run the test suite: python -m pytest tests
+pytest
+httpx

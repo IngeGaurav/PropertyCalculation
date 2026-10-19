@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thermo API Tester</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1d2330; --muted: #6a7385; --border: #dde1e8;
+    --accent: #2b6cb0; --accent-text: #ffffff; --ok: #1e7e4a; --ok-bg: #e6f4ec;
+    --err: #b3261e; --err-bg: #fdecea; --code-bg: #f0f2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #98a1b3; --border: #2b3240;
+      --accent: #5b9bf0; --accent-text: #0b1220; --ok: #5fd08d; --ok-bg: #16301f;
+      --err: #ff8a80; --err-bg: #3a1c1a; --code-bg: #232a36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 14px 16px; }
+  header h1 { margin: 0 0 10px; font-size: 18px; }
+  .conn { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  .conn label { flex: 1 1 240px; }
+  .conn label.small { flex: 0 1 220px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+          background: var(--bg); color: var(--text); font: inherit; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+           background: var(--panel); color: var(--text); font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  #health { font-size: 13px; padding: 6px 10px; border-radius: 6px; background: var(--code-bg); color: var(--muted); }
+  #health.up { background: var(--ok-bg); color: var(--ok); }
+  #health.down { background: var(--err-bg); color: var(--err); }
+
+  .layout { display: flex; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; align-items: flex-start; }
+  nav { flex: 0 0 230px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+        padding: 6px; position: sticky; top: 12px; }
+  nav button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px;
+               border-radius: 6px; }
+  nav button.active { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+  nav .grp { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 8px 10px 2px; }
+  main { flex: 1 1 0; min-width: 0; }
+  section { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  section.active { display: block; }
+  section h2 { margin: 0 0 2px; font-size: 18px; }
+  section .path { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--muted); }
+  section p.desc { margin: 8px 0 14px; color: var(--muted); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .row > div { flex: 1 1 160px; }
+  table.comps { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  table.comps th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 0 6px 4px 0; }
+  table.comps td { padding: 0 6px 6px 0; }
+  table.comps td.x { width: 40px; }
+  .sum { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .result { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.err { background: var(--err-bg); color: var(--err); }
+  .meta { font-size: 12px; color: var(--muted); margin-left: 8px; }
+  table.out { width: 100%; border-collapse: collapse; margin: 10px 0; }
+  table.out th, table.out td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  table.out th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  table.out td.num { font-family: ui-monospace, Consolas, monospace; }
+  .null { color: var(--muted); font-style: italic; }
+  .errbox { background: var(--err-bg); color: var(--err); border-radius: 8px; padding: 10px 14px; margin-top: 10px; }
+  .errbox ul { margin: 6px 0 0; padding-left: 20px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  pre { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; overflow: auto; font-size: 12.5px; margin: 6px 0 0; }
+  @media (max-width: 760px) {
+    .layout { flex-direction: column; padding: 12px; }
+    nav { position: static; flex: none; width: 100%; display: flex; flex-wrap: wrap; }
+    nav button { width: auto; }
+    nav .grp { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Thermo API Tester</h1>
+  <div class="conn">
+    <label>Backend URL
+      <input id="baseUrl" value="http://localhost:8000" spellcheck="false">
+    </label>
+    <label class="small">API key (optional)
+      <input id="apiKey" type="password" placeholder="X-API-Key" autocomplete="off">
+    </label>
+    <button id="checkBtn" type="button">Check connection</button>
+    <span id="health">not checked</span>
+  </div>
+</header>
+
+<div class="layout">
+  <nav id="nav" aria-label="Endpoints"></nav>
+  <main id="main"></main>
+</div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- definitions
+const WET = { T: 350, P: 101325, comps: [["water", 0.5], ["hexane", 0.5]] };
+const GAS = { T: 423.15, P: 29411.81, comps: [["methane", 0.5], ["ethane", 0.5]] };
+
+const ENDPOINTS = [
+  { path: "/cp_calc", group: "Single / two-phase (VLE)", title: "Heat capacity",
+    desc: "Liquid, vapor and mixture Cp from a vapor-liquid flash at T and P.", ex: GAS },
+  { path: "/density_calc", group: "Single / two-phase (VLE)", title: "Density",
+    desc: "Mixture density at T and P.", ex: GAS },
+  { path: "/enthalpy_calc", group: "Single / two-phase (VLE)", title: "Enthalpy",
+    desc: "Mixture enthalpy at T and P, molar and mass basis.", ex: GAS },
+  { path: "/mw_calc", group: "Single / two-phase (VLE)", title: "Molecular weight",
+    desc: "Liquid, vapor and average molecular weight.", ex: GAS },
+  { path: "/vf_calc", group: "Single / two-phase (VLE)", title: "Vapor fraction",
+    desc: "Vapor and liquid mole fractions from the flash.", ex: GAS },
+  { path: "/std_enthalpy_calc", group: "Single / two-phase (VLE)", title: "Standard enthalpy", noTP: true,
+    desc: "Mole-weighted formation enthalpy at 298.15 K and 1 atm. T and P are not used.", ex: GAS },
+  { path: "/triphase_cp_calc", group: "Vapor / aqueous / organic (needs water)", title: "Triphase heat capacity",
+    desc: "Cp of the vapor, aqueous and organic phases. The mixture must contain water.", ex: WET },
+  { path: "/triphase_mw_calc", group: "Vapor / aqueous / organic (needs water)", title: "Triphase molecular weight",
+    desc: "Molecular weight of the vapor, aqueous and organic phases. The mixture must contain water.", ex: WET },
+  { path: "/triphase_vf_calc", group: "Vapor / aqueous / organic (needs water)", title: "Triphase fractions",
+    desc: "Vapor, aqueous and organic fractions of the total mixture. The mixture must contain water.", ex: WET },
+];
+
+// ----------------------------------------------------------------- helpers
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const kid of kids) n.append(kid);
+  return n;
+};
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+};
+const baseUrl = () => $("#baseUrl").value.trim().replace(/\/+$/, "");
+const headers = () => {
+  const h = { "Content-Type": "application/json" };
+  const key = $("#apiKey").value.trim();
+  if (key) h["X-API-Key"] = key;
+  return h;
+};
+const fmt = v => (typeof v === "number" ? String(Number(v.toPrecision(10))) : String(v));
+
+// -------------------------------------------------------------- build a card
+function buildSection(ep, index) {
+  const sec = el("section", { id: "sec" + index });
+  sec.append(el("h2", {}, ep.title), el("div", { class: "path" }, "POST " + ep.path),
+             el("p", { class: "desc" }, ep.desc));
+
+  const tInput = el("input", { type: "number", step: "any", value: ep.ex.T });
+  const pInput = el("input", { type: "number", step: "any", value: ep.ex.P });
+  if (!ep.noTP) {
+    sec.append(el("div", { class: "row" },
+      el("div", {}, el("label", {}, "Temperature T (K)"), tInput),
+      el("div", {}, el("label", {}, "Pressure P (Pa)"), pInput)));
+  }
+
+  const tbody = el("tbody");
+  const sumLine = el("p", { class: "sum" });
+  const addRow = (name = "", z = "") => {
+    const nameIn = el("input", { value: name, placeholder: "e.g. water or 7732-18-5", spellcheck: "false" });
+    const zIn = el("input", { type: "number", step: "any", min: "0", value: z, placeholder: "0.5" });
+    const rm = el("button", { type: "button", title: "Remove", onclick: () => { tr.remove(); updateSum(); } }, "✕");
+    const tr = el("tr", {}, el("td", {}, nameIn), el("td", {}, zIn), el("td", { class: "x" }, rm));
+    zIn.addEventListener("input", updateSum);
+    tbody.append(tr);
+  };
+  const readComps = () => [...tbody.rows].map(r => ({
+    name: r.cells[0].firstChild.value.trim(), z: r.cells[1].firstChild.value }));
+  function updateSum() {
+    const total = readComps().reduce((s, c) => s + (parseFloat(c.z) || 0), 0);
+    const off = Math.abs(total - 1) > 1e-9;
+    sumLine.textContent = `Sum of mole fractions: ${Number(total.toPrecision(10))}` +
+      (off ? " (the API will rescale them to 1)" : "");
+  }
+  const loadExample = () => {
+    tbody.replaceChildren();
+    ep.ex.comps.forEach(([n, z]) => addRow(n, z));
+    if (!ep.noTP) { tInput.value = ep.ex.T; pInput.value = ep.ex.P; }
+    updateSum();
+  };
+
+  sec.append(
+    el("table", { class: "comps" },
+      el("thead", {}, el("tr", {}, el("th", {}, "Component (name or CAS)"), el("th", {}, "Mole fraction"), el("th"))),
+      tbody),
+    sumLine);
+
+  const result = el("div", { class: "result", hidden: "" });
+  const runBtn = el("button", { class: "primary", type: "button" }, "Calculate");
+
+  runBtn.addEventListener("click", async () => {
+    const comps = readComps();
+    const body = { components: comps.map(c => c.name), zs: comps.map(c => parseFloat(c.z)) };
+    if (!ep.noTP) { body.T = parseFloat(tInput.value); body.P = parseFloat(pInput.value); }
+    const problem = clientCheck(body, ep);
+    if (problem) return showError(result, { code: "client_check", message: problem }, body, null);
+
+    runBtn.disabled = true; runBtn.textContent = "Calculating…";
+    const t0 = performance.now();
+    try {
+      const res = await fetch(baseUrl() + ep.path, { method: "POST", headers: headers(), body: JSON.stringify(body) });
+      const text = await res.text();
+      let json; try { json = JSON.parse(text); } catch { json = null; }
+      const ms = performance.now() - t0;
+      if (res.ok && json && json.status === "success") showSuccess(result, json, body, res.status, ms);
+      else if (json && json.error) showError(result, json.error, body, { status: res.status, ms, json, rid: json.request_id });
+      else showError(result, { code: "bad_response", message: `Unexpected response (HTTP ${res.status}).` }, body,
+                     { status: res.status, ms, json: text });
+    } catch (e) {
+      showError(result, { code: "network_error",
+        message: `Could not reach ${baseUrl()}. Check that the backend is running, the URL is right, and CORS allows this page.` },
+        body, null);
+    } finally { runBtn.disabled = false; runBtn.textContent = "Calculate"; }
+  });
+
+  sec.append(el("div", { class: "actions" }, runBtn,
+    el("button", { type: "button", onclick: loadExample }, "Load example"),
+    el("button", { type: "button", onclick: () => { addRow(); updateSum(); } }, "+ Add component")), result);
+  loadExample();
+  return sec;
+}
+
+function clientCheck(b, ep) {
+  if (!ep.noTP && !(b.T > 0)) return "Temperature must be a number greater than 0.";
+  if (!ep.noTP && !(b.P > 0)) return "Pressure must be a number greater than 0.";
+  if (!b.components.length) return "Add at least one component.";
+  if (b.components.some(n => !n)) return "Every component needs a name.";
+  if (b.zs.some(z => Number.isNaN(z))) return "Every component needs a mole fraction.";
+  return null;
+}
+
+// ------------------------------------------------------------------ results
+function requestBlock(body, extra) {
+  const d = el("details", {}, el("summary", {}, "Request / raw response"));
+  d.append(el("pre", {}, "REQUEST\n" + JSON.stringify(body, null, 2)));
+  if (extra) d.append(el("pre", {}, "RESPONSE (HTTP " + extra.status + ")\n" +
+    (typeof extra.json === "string" ? extra.json : JSON.stringify(extra.json, null, 2))));
+  return d;
+}
+
+function showSuccess(box, json, body, status, ms) {
+  box.hidden = false; box.replaceChildren();
+  const head = el("div", {}, el("span", { class: "badge ok" }, "Success · HTTP " + status),
+    el("span", { class: "meta" }, `${ms.toFixed(0)} ms round-trip · server ${json.meta.elapsed_ms} ms · request ${json.meta.request_id}`));
+  const table = el("table", { class: "out" }, el("thead", {}, el("tr", {},
+    el("th", {}, "Property"), el("th", {}, "Value"), el("th", {}, "Unit"))));
+  const tb = el("tbody");
+  for (const [k, v] of Object.entries(json.data)) {
+    const val = v === null ? el("td", { class: "null" }, "n/a (phase not present)") : el("td", { class: "num" }, fmt(v));
+    tb.append(el("tr", {}, el("td", {}, k), val, el("td", {}, json.units[k] || "")));
+  }
+  table.append(tb);
+  box.append(head, table);
+  if (json.meta.zs_normalized) box.append(el("div", { class: "meta" }, "Your mole fractions did not sum to 1, so the API rescaled them."));
+  box.append(requestBlock(body, { status, json }));
+}
+
+function showError(box, error, body, extra) {
+  box.hidden = false; box.replaceChildren();
+  const status = extra ? " · HTTP " + extra.status : "";
+  box.append(el("div", {}, el("span", { class: "badge err" }, "Error" + status),
+    el("span", { class: "meta" }, extra && extra.rid ? "request " + extra.rid : "")));
+  const msg = el("div", { class: "errbox" }, el("strong", {}, error.code + ": "), error.message);
+  if (Array.isArray(error.details)) {
+    const ul = el("ul");
+    error.details.forEach(d => ul.append(el("li", {}, (d.field && d.field !== "body" ? d.field + ": " : "") + d.message)));
+    msg.append(ul);
+  } else if (error.details) msg.append(el("pre", {}, JSON.stringify(error.details)));
+  box.append(msg, requestBlock(body, extra));
+}
+
+// ------------------------------------------------------------------- shell
+const nav = $("#nav"), main = $("#main");
+let lastGroup = "";
+ENDPOINTS.forEach((ep, i) => {
+  if (ep.group !== lastGroup) { nav.append(el("div", { class: "grp" }, ep.group)); lastGroup = ep.group; }
+  nav.append(el("button", { type: "button", "data-i": i, onclick: () => select(i) }, `${i + 1}. ${ep.title}`));
+  main.append(buildSection(ep, i));
+});
+function select(i) {
+  nav.querySelectorAll("button").forEach(b => b.classList.toggle("active", +b.dataset.i === i));
+  main.querySelectorAll("section").forEach((s, j) => s.classList.toggle("active", j === i));
+  store.set("thermo.tab", String(i));
+}
+select(Math.min(+store.get("thermo.tab", "0") || 0, ENDPOINTS.length - 1));
+
+// --------------------------------------------------------------- connection
+$("#baseUrl").value = store.get("thermo.url", "http://localhost:8000");
+$("#apiKey").value = store.get("thermo.key", "");
+async function checkHealth() {
+  const h = $("#health");
+  store.set("thermo.url", $("#baseUrl").value.trim());
+  store.set("thermo.key", $("#apiKey").value);
+  h.className = ""; h.textContent = "checking…";
+  try {
+    const r = await fetch(baseUrl() + "/health");
+    const j = await r.json();
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    h.className = "up"; h.textContent = `connected · API v${j.version}`;
+  } catch {
+    h.className = "down"; h.textContent = "cannot reach backend";
+  }
+}
+$("#checkBtn").addEventListener("click", checkHealth);
+$("#baseUrl").addEventListener("change", checkHealth);
+$("#apiKey").addEventListener("change", () => store.set("thermo.key", $("#apiKey").value));
+checkHealth();
+</script>
+</body>
+</html>
