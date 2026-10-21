@@ -355,7 +355,10 @@ function select(i) {
 select(Math.min(+store.get("thermo.tab", "0") || 0, ENDPOINTS.length - 1));
 
 // --------------------------------------------------------------- connection
-$("#baseUrl").value = store.get("thermo.url", "http://localhost:8000");
+// Served by nginx (http/https): call the API on the same server under /api (no CORS involved).
+// Opened as a file: fall back to a locally running backend.
+const DEFAULT_URL = location.protocol.startsWith("http") ? location.origin + "/api" : "http://localhost:8000";
+$("#baseUrl").value = store.get("thermo.url", DEFAULT_URL);
 $("#apiKey").value = store.get("thermo.key", "");
 async function checkHealth() {
   const h = $("#health");

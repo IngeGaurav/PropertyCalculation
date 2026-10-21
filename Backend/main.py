@@ -2,8 +2,10 @@
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -12,13 +14,27 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.errors import ApiError
 from app.routes import router
+from app.schemas import CPCalcInput
+from app.thermo_service import cp as _warm_up_calc
 
 logging.basicConfig(
     level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s"
 )
 log = logging.getLogger("thermo_api")
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Run one small calculation at startup so thermo loads its databases before the first user."""
+    try:
+        await run_in_threadpool(_warm_up_calc, CPCalcInput())
+        log.info("Warm-up calculation finished.")
+    except Exception:
+        log.exception("Warm-up failed (the API will still start).")
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Thermo Property API",
     version="2.0.0",
     description="Heat capacity, density, enthalpy, molecular weight and phase "

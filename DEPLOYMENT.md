@@ -1,312 +1,340 @@
-# Deployment guide – Thermo Property API
+# Deployment Guide – Thermo Property API on a Windows Server with nginx
 
-How to take the code in `Backend/` from your laptop to a server where the API is reachable by others,
-and how to publish the `Frontend/` tester. Written for a Linux server (the usual choice); a Windows
-server variant is in §9. No deployment files are included in the project – everything you need is shown
-inline here, so you copy only what you decide to use.
-
-```
-FastApi/
-  Backend/    FastAPI service  (main.py, app/, tests/, DOCUMENTATION.md)
-  Frontend/   index.html – the 9-endpoint tester (static, no build step)
-  DEPLOYMENT.md  (this file)
-```
+Target: a company Windows computer on the LAN, **Python 3.13**, **nginx already installed**, no API key and no CORS
+restrictions (access is limited by the company network). Follow the steps in order; every command is meant to be copied.
 
 ---
 
-## 1. What "building" means for this project
+## 1. How it will look when deployed
 
-Python has no compile step. "Building" = **reproducing the same environment on the server**:
+```
+ Browser on any LAN computer
+        |   http://SERVER-NAME/            -> page (Frontend/index.html)
+        |   http://SERVER-NAME/api/...     -> API calls
+        v
+ +--------------------- Windows server ----------------------------+
+ |  nginx (port 80)                                                |
+ |    /      serves   C:\thermo-api\Frontend\index.html            |
+ |    /api/  proxies  http://127.0.0.1:8000/   (prefix removed)    |
+ |                          |                                      |
+ |            uvicorn + FastAPI (2 workers, localhost only)        |
+ |            runs as Windows service "ThermoApi" (auto-start)     |
+ +-----------------------------------------------------------------+
+```
 
-1. the same Python version family,
-2. the same pinned package versions,
-3. the code,
-4. a long-running process that serves it, started automatically and restarted on failure,
-5. (recommended) a reverse proxy in front of it that handles HTTPS.
+Why this design:
+- The page and the API come from the **same address**, so the browser never does a cross-origin call – **no CORS setup is needed**.
+- Port 8000 is bound to `127.0.0.1`, so the backend cannot be reached directly from the network; only nginx (port 80) is exposed.
+- Both nginx and the backend run as **services**, so they start when the computer boots and restart if they crash.
 
-The frontend is one static HTML file: "building" it means copying it to a web server and pointing its
-"Backend URL" box at the API.
+**Security note (your decision, recorded here):** there is no API key and CORS is open, because the server is only reachable inside the
+company LAN. That means *anyone on the LAN* can use the API and open `/api/docs`. If this ever changes, §12 shows how to switch an API key on without code changes.
 
 ---
 
-## 2. Before you touch the server
+## 2. What you need before starting (checklist)
 
-**2.1 Pick the Python version.** The code was developed and tested on Python 3.14. `thermo` depends on
-numpy/scipy, whose binary wheels appear a little later for brand-new Python versions. For the server use
-**Python 3.11 or 3.12** (wheels exist for everything), then **run the tests on the server** (§5.4) – that is
-your proof the environment is good.
+| # | Item | How to check |
+|---|---|---|
+| 1 | Administrator access on the server | You can open PowerShell with *Run as administrator* |
+| 2 | **Python 3.13, 64-bit**, installed *for all users*, "Add python.exe to PATH" ticked | `python --version` -> `Python 3.13.x`, and `python -c "import struct;print(struct.calcsize('P')*8)"` -> `64` |
+| 3 | nginx for Windows installed (this guide assumes `C:\nginx`) | `C:\nginx\nginx.exe -v` |
+| 4 | **NSSM** (turns a program into a Windows service) from https://nssm.cc/download – unzip `win64\nssm.exe` to `C:\Windows\System32` | `nssm version` |
+| 5 | Internet access to PyPI **or** the offline wheel folder from §5.2 | `python -m pip download six -d %TEMP%\x` works |
+| 6 | Port **80** free (nothing else, e.g. IIS, uses it) | `netstat -ano | findstr ":80 "` shows nothing listening. If it is taken, use another port (§13) |
+| 7 | The project folder from this PC (`Backend`, `Frontend`, `deploy`, `DEPLOYMENT.md`) | See §3 |
 
-**2.2 Pin the dependencies.** Create `Backend/requirements.txt` with the versions tested here:
-
-```
-fastapi==0.142.2
-uvicorn[standard]==0.54.0
-thermo==0.6.1
-chemicals==1.5.2
-fluids==1.3.1
-numpy==2.5.3
-scipy==1.18.1
-pydantic==2.13.5
-```
-(`thermo` brings numpy/scipy/chemicals/fluids itself; listing them keeps the install reproducible.
-If numpy 2.5.3 or scipy 1.18.1 have no wheel for your server's Python, let pip choose by deleting those two lines, then run the tests.)
-For running tests only (not needed in production): `pytest`, `httpx`.
-
-> thermo is the version-sensitive part. The code relies on 0.6.x behaviour (`Chemical.Hf` being mass-based,
-> `Hfm`, `Cpl`/`Cpg` in J/kg/K, `Mixture.VF/xs/ys`). Keep `thermo==0.6.1` unless you re-run the tests after upgrading.
-
-**2.3 Decide the security posture** (see §7): will the API be public or only on your network, do you want an
-API key, which website origin(s) may call it from a browser.
-
-**2.4 Decide the address**: `https://api.yourcompany.com` (a DNS record pointing to the server) is better than a raw IP,
-because HTTPS certificates need a name.
+All pinned packages were checked to have ready-made **binary wheels for Python 3.13 / Windows 64-bit**, so no C compiler is needed.
+(Verified with `pip install --dry-run --python-version 3.13 --platform win_amd64 --only-binary=:all:`.)
 
 ---
 
-## 3. Configuration (environment variables)
+## 3. Put the project on the server
 
-| Variable | Recommended production value |
-|---|---|
-| `API_KEY` | A long random string, e.g. output of `python -c "import secrets;print(secrets.token_urlsafe(32))"`. Clients send it as header `X-API-Key`. |
-| `CORS_ORIGINS` | The exact origin(s) of your frontend, e.g. `https://thermo.yourcompany.com`. Not `*`. |
-| `CALC_TIMEOUT_SECONDS` | `30` (raise only if you really have slow mixtures) |
-| `MAX_COMPONENTS` | `0` (unlimited; set e.g. `200` if you want a safety cap) |
-| `LOG_LEVEL` | `INFO` |
+Target folder: **`C:\thermo-api`** (avoid spaces in the path; if you choose another folder, change it in
+the nginx file and the NSSM commands as well).
 
-Keep them in a file readable only by the service user (e.g. `/etc/thermo-api.env`, `chmod 600`) – never in git.
-
----
-
-## 4. Server preparation (Ubuntu 22.04/24.04 example)
-
-```bash
-sudo apt update
-sudo apt install -y python3.12 python3.12-venv nginx ufw      # python3.11 works too
-sudo adduser --system --group --home /opt/thermo-api thermo   # unprivileged service user
-sudo mkdir -p /opt/thermo-api && sudo chown thermo:thermo /opt/thermo-api
+Final layout:
+```
+C:\thermo-api\
+  Backend\        main.py, app\, tests\, requirements.txt
+  Frontend\       index.html
+  deploy\         nginx.conf, run_backend.bat
+  venv\           (created in step 5)
+  logs\           (created in step 7)
 ```
 
-Firewall – only SSH and web ports are open; uvicorn itself stays private on localhost:
-
-```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx Full'      # 80 and 443
-sudo ufw enable
-```
-
----
-
-## 5. Install the backend
-
-### 5.1 Copy the code
-From your PC (PowerShell), copy the **contents of `Backend/`** (not the tests' caches):
+**Option A – git** (if git is installed on the server):
 ```powershell
-scp -r Backend\main.py Backend\app Backend\tests Backend\requirements.txt user@SERVER:/tmp/thermo-api/
+git clone https://github.com/IngeGaurav/PropertyCalculation.git C:\thermo-api
 ```
-(or `git clone` your repository on the server – preferable, because updates become `git pull`.)
-```bash
-sudo rsync -a /tmp/thermo-api/ /opt/thermo-api/ && sudo chown -R thermo:thermo /opt/thermo-api
-```
+**Option B – copy:** zip the project folder on your PC (without `__pycache__`, `.pytest_cache`, `venv`), copy it to the server and unzip it into `C:\thermo-api`.
 
-### 5.2 Create the virtual environment and install
-```bash
-sudo -u thermo python3.12 -m venv /opt/thermo-api/venv
-sudo -u thermo /opt/thermo-api/venv/bin/pip install --upgrade pip
-sudo -u thermo /opt/thermo-api/venv/bin/pip install -r /opt/thermo-api/requirements.txt
-```
-
-### 5.3 Create the environment file
-```bash
-sudo tee /etc/thermo-api.env >/dev/null <<'EOF'
-API_KEY=put-the-generated-key-here
-CORS_ORIGINS=https://thermo.yourcompany.com
-CALC_TIMEOUT_SECONDS=30
-LOG_LEVEL=INFO
-EOF
-sudo chmod 600 /etc/thermo-api.env
-```
-
-### 5.4 Verify the environment with the test-suite
-```bash
-sudo -u thermo /opt/thermo-api/venv/bin/pip install pytest httpx
-cd /opt/thermo-api && sudo -u thermo /opt/thermo-api/venv/bin/python -m pytest -q tests
-```
-Expect `31 passed`. If a test fails here but passed on your PC, the cause is almost always a different
-thermo/numpy version – fix the pins before going on.
-The tests read settings from the environment, so run them in a shell where `API_KEY` / `CORS_ORIGINS` are **not** exported
-(the systemd env file is not loaded by your shell, so the command above is fine). If you exported them, prefix with `env -u API_KEY`.
-
-### 5.5 Run it as a service (systemd)
-Create `/etc/systemd/system/thermo-api.service`:
-```ini
-[Unit]
-Description=Thermo Property API
-After=network.target
-
-[Service]
-User=thermo
-Group=thermo
-WorkingDirectory=/opt/thermo-api
-EnvironmentFile=/etc/thermo-api.env
-ExecStart=/opt/thermo-api/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 2 --proxy-headers
-Restart=always
-RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-```
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now thermo-api
-sudo systemctl status thermo-api
-curl http://127.0.0.1:8000/health          # {"status":"ok","version":"2.0.0"}
-journalctl -u thermo-api -f                # live logs (one line per request, with request id)
-```
-Notes on `--workers 2`: thermo calculations are CPU-bound Python. Each worker is a separate process, so use roughly
-the number of CPU cores (1–4 is typical). More workers = more parallel calculations and better isolation from
-a slow one. The first request per worker is slow (~2 s) because thermo loads its databases; this is normal.
+Check: `dir C:\thermo-api` shows `Backend`, `Frontend`, `deploy`.
 
 ---
 
-## 6. Put HTTPS in front (nginx + Let's Encrypt)
-
-`/etc/nginx/sites-available/thermo-api`:
-```nginx
-server {
-    server_name api.yourcompany.com;
-
-    client_max_body_size 64k;           # requests are tiny; reject anything large
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 60s;         # must be larger than CALC_TIMEOUT_SECONDS
-    }
-}
-```
-```bash
-sudo ln -s /etc/nginx/sites-available/thermo-api /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d api.yourcompany.com      # issues the certificate and enables auto-renewal
-```
-Optional rate limiting (stops one client from saturating the CPU): in the `http {}` block of `nginx.conf` add
-`limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;` and inside `location /` add `limit_req zone=api burst=20 nodelay;`.
-
-**Smoke-test from anywhere:**
-```bash
-curl https://api.yourcompany.com/health
-curl -X POST https://api.yourcompany.com/cp_calc \
-  -H "Content-Type: application/json" -H "X-API-Key: YOUR_KEY" \
-  -d '{"T":350,"P":101325,"components":["water","hexane"],"zs":[0.5,0.5]}'
-```
-Interactive docs: `https://api.yourcompany.com/docs`.
-Note: with `API_KEY` set, `/docs` and `/health` still load without a key, but "Try it out" in `/docs` requires you to send the header (the
-`/docs` page does not have a key field; use the Frontend or curl). If you do not want `/docs` public, block it in nginx:
-`location /docs { return 404; }` and `location /openapi.json { return 404; }`.
+## 4. Allow the services to read the folder
+If you will run the service under the default account (Local System) you can skip this. If you create a dedicated service account, give it *Read & execute*
+on `C:\thermo-api` and *Modify* on `C:\thermo-api\logs`.
 
 ---
 
-## 7. Security checklist
+## 5. Create the Python environment
 
-- [ ] `API_KEY` set to a long random value, shared only with the people/systems that need it.
-- [ ] `CORS_ORIGINS` is the exact frontend origin, not `*`.
-- [ ] HTTPS only (certbot redirects HTTP to HTTPS). Without HTTPS the API key travels in clear text.
-- [ ] uvicorn bound to `127.0.0.1`; only nginx is reachable from outside; firewall allows only 22/80/443.
-- [ ] Service runs as the unprivileged `thermo` user; env file is `chmod 600`.
-- [ ] The API key typed into the Frontend is stored in that browser's localStorage. Use the tester only on trusted machines. A public website
-      should **not** embed the key in page JavaScript – call the API from your own server instead.
-- [ ] Rate limiting enabled in nginx if the API is exposed to the internet.
-- [ ] OS security updates enabled (`unattended-upgrades`).
+Open **PowerShell as Administrator**:
 
----
-
-## 8. Publishing the frontend
-
-`Frontend/index.html` is a static file; it runs entirely in the user's browser and talks to the API with `fetch`.
-
-**Option A – just open the file.** Double-click it, type the backend URL in the top box, press *Check connection*. Works because the
-API allows cross-origin calls (with the default `CORS_ORIGINS=*`; if you restrict CORS, a page opened from disk has origin `null` and will be blocked – use option B).
-
-**Option B – serve it from nginx (recommended for a team):**
-```bash
-sudo mkdir -p /var/www/thermo && sudo cp Frontend/index.html /var/www/thermo/
+### 5.1 Online server
+```powershell
+cd C:\thermo-api
+py -3.13 -m venv venv
+.\venv\Scripts\python.exe -m pip install --upgrade pip
+.\venv\Scripts\python.exe -m pip install -r Backend\requirements-dev.txt
 ```
-```nginx
-server {
-    server_name thermo.yourcompany.com;
-    root /var/www/thermo;
-    index index.html;
-}
+(`requirements-dev.txt` = runtime packages + pytest/httpx so you can run the tests in step 6.)
+
+### 5.2 Server without internet
+On **any PC with internet** (any Python 3.x is fine for downloading):
+```powershell
+cd <project>\Backend
+python -m pip download -r requirements-dev.txt -d wheels --only-binary=:all: --platform win_amd64 --python-version 3.13
 ```
-then `sudo certbot --nginx -d thermo.yourcompany.com` and set `CORS_ORIGINS=https://thermo.yourcompany.com` on the API
-(`sudo systemctl restart thermo-api` after editing the env file).
-To pre-fill the backend URL for your users, change the default in `index.html`
-(`value="http://localhost:8000"` in the `baseUrl` input).
-
-**Option C – same domain, no CORS at all:** serve the HTML from the same nginx `server` as the API, e.g. API under `/api/`
-(strip the prefix with `proxy_pass http://127.0.0.1:8000/;`) and put `https://yourdomain/api` in the Backend URL box.
-
----
-
-## 9. Windows Server variant
-
-1. Install Python 3.11/3.12 (tick *Add to PATH*).
-2. `python -m venv C:\thermo-api\venv` → `C:\thermo-api\venv\Scripts\pip install -r requirements.txt` → run the tests (§5.4, use `python -m pytest`).
-3. Set machine-level environment variables (`API_KEY`, `CORS_ORIGINS`, …) in *System Properties → Environment Variables*, or with `setx /M`.
-4. Run: `C:\thermo-api\venv\Scripts\uvicorn main:app --host 0.0.0.0 --port 8000` from `C:\thermo-api`.
-   (Windows cannot use `--workers` with gunicorn, but uvicorn's own `--workers N` works.)
-5. Make it a service that starts on boot and restarts on failure with **NSSM** (`nssm install ThermoApi`, set the uvicorn command line and
-   working directory) or Task Scheduler ("run at startup", "restart on failure").
-6. Open the port: `New-NetFirewallRule -DisplayName ThermoApi -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow`.
-   Only do this on a trusted network, or put IIS (with the URL Rewrite + ARR modules) / nginx for Windows in front for HTTPS.
-
----
-
-## 10. Operating it
-
-**Deploy an update**
-```bash
-cd /opt/thermo-api && sudo -u thermo git pull            # or rsync the new files
-sudo -u thermo venv/bin/pip install -r requirements.txt  # only matters if requirements changed
-sudo -u thermo venv/bin/python -m pytest -q tests        # must still pass
-sudo systemctl restart thermo-api
-curl https://api.yourcompany.com/health
+Copy the `wheels` folder to the server (e.g. `C:\thermo-api\wheels`), then:
+```powershell
+cd C:\thermo-api
+py -3.13 -m venv venv
+.\venv\Scripts\python.exe -m pip install --no-index --find-links wheels -r Backend\requirements-dev.txt
 ```
-Keep the previous release (e.g. `git tag`) so you can roll back with `git checkout <tag>` + restart.
 
-**Find a problem for a user.** Ask for the `request_id` in the error JSON (or the `X-Request-ID` header) and run
-`journalctl -u thermo-api | grep <request_id>`. 500 errors log the full traceback.
-
-**Monitoring.** Point an uptime checker (UptimeRobot, Zabbix, a cron + curl) at `GET /health`. Watch for repeated `504 calculation_timeout`
-(a pathological mixture – lower `MAX_COMPONENTS` or `CALC_TIMEOUT_SECONDS`) and `5xx` rates in the logs.
-
-**Capacity.** One calculation typically takes 10–50 ms once warm. A timed-out calculation keeps its thread busy until it finishes
-(see `Backend/DOCUMENTATION.md` §7), so a client repeatedly sending hard mixtures can tie up a worker – rate limiting (§6) is your protection.
-
-**Logs.** journald rotates automatically. For a file-based setup, add `logrotate`.
+Check: `.\venv\Scripts\python.exe -c "import thermo, fastapi; print(thermo.__version__, fastapi.__version__)"` -> `0.6.1 0.142.2`.
 
 ---
 
-## 11. Optional: containers
-If your organisation prefers containers, the equivalent is a `python:3.12-slim` image that copies `Backend/`, runs
-`pip install -r requirements.txt`, and starts `uvicorn main:app --host 0.0.0.0 --port 8000`, with the same environment variables passed at run time and the
-nginx/HTTPS layer unchanged. This guide does not require it.
+## 6. Prove the environment works – run the tests
+```powershell
+cd C:\thermo-api\Backend
+..\venv\Scripts\python.exe -m pytest -q tests
+```
+Expected: **`31 passed`**. If anything fails here, do **not** continue – it means a package version differs from the tested one (re-check step 5).
+(The tests need `API_KEY` / `CORS_ORIGINS` to be unset in this PowerShell window; they are by default.)
+
+Then start the backend by hand once, to see it working before making it a service:
+```powershell
+cd C:\thermo-api
+.\deploy\run_backend.bat
+```
+Leave that window open. In a **second** PowerShell window:
+```powershell
+curl.exe http://127.0.0.1:8000/health
+```
+Expected: `{"status":"ok","version":"2.0.0"}`. Stop the first window with `Ctrl+C`.
+(The log shows `Warm-up calculation finished.` for each worker – the first calculation is done at startup, so users don't wait for it.)
 
 ---
 
-## 12. Go-live checklist
+## 7. Install the backend as a Windows service (auto-start)
 
-1. [ ] Tests pass on the server (`31 passed`).
-2. [ ] `systemctl status thermo-api` is `active (running)`; it survives `sudo reboot`.
-3. [ ] `https://api…/health` returns `ok` from outside the server.
-4. [ ] A calculation with the API key works; the same call **without** the key returns `401`.
-5. [ ] Frontend loads, *Check connection* shows "connected", each of the 9 tabs returns a result with *Load example*.
-6. [ ] A bad input (e.g. mismatched component/fraction counts) shows a readable error in the Frontend.
-7. [ ] CORS restricted, firewall on, key not committed to git.
-8. [ ] Someone other than you knows where the env file, logs and this guide are.
+```powershell
+New-Item -ItemType Directory -Force C:\thermo-api\logs | Out-Null
+
+nssm install ThermoApi "C:\thermo-api\venv\Scripts\python.exe" "-m uvicorn main:app --host 127.0.0.1 --port 8000 --workers 2 --root-path /api --proxy-headers"
+nssm set ThermoApi AppDirectory   "C:\thermo-api\Backend"
+nssm set ThermoApi DisplayName    "Thermo Property API"
+nssm set ThermoApi Start          SERVICE_AUTO_START
+nssm set ThermoApi AppEnvironmentExtra "LOG_LEVEL=INFO" "CALC_TIMEOUT_SECONDS=30"
+nssm set ThermoApi AppStdout      "C:\thermo-api\logs\backend.log"
+nssm set ThermoApi AppStderr      "C:\thermo-api\logs\backend.log"
+nssm set ThermoApi AppRotateFiles 1
+nssm set ThermoApi AppRotateOnline 1
+nssm set ThermoApi AppRotateBytes 10485760
+nssm set ThermoApi AppExit Default Restart
+nssm start ThermoApi
+```
+What the flags mean:
+
+| Flag | Why |
+|---|---|
+| `--host 127.0.0.1` | Only nginx on this computer can reach the backend |
+| `--workers 2` | Two processes -> two calculations in parallel. Use the number of CPU cores (1-4) |
+| `--root-path /api` | The API lives under `/api` behind nginx; this makes `/api/docs` work |
+| `--proxy-headers` | Uses the client address nginx forwards in the logs |
+
+Check:
+```powershell
+nssm status ThermoApi                       # SERVICE_RUNNING
+curl.exe http://127.0.0.1:8000/health       # {"status":"ok",...}
+Get-Content C:\thermo-api\logs\backend.log -Tail 20
+```
+
+---
+
+## 8. Configure nginx
+
+1. Back up the original: `copy C:\nginx\conf\nginx.conf C:\nginx\conf\nginx.conf.bak`
+2. Copy `C:\thermo-api\deploy\nginx.conf` over `C:\nginx\conf\nginx.conf`.
+   (If nginx on this computer already serves other sites, do not overwrite – copy only the `server { ... }` block into your existing `http { }`.)
+3. Open it and check the `root` line points at your folder: `root C:/thermo-api/Frontend;` (forward slashes!).
+4. Test the syntax:
+```powershell
+cd C:\nginx
+.\nginx.exe -t
+```
+Expected: `syntax is ok` and `test is successful`.
+
+5. Run nginx as a service (nginx for Windows has no service of its own):
+```powershell
+nssm install nginx "C:\nginx\nginx.exe"
+nssm set nginx AppDirectory "C:\nginx"
+nssm set nginx Start SERVICE_AUTO_START
+nssm set nginx AppStdout "C:\thermo-api\logs\nginx-service.log"
+nssm set nginx AppStderr "C:\thermo-api\logs\nginx-service.log"
+nssm start nginx
+```
+(If nginx is already running from a previous manual start, stop it first: `C:\nginx\nginx.exe -s stop`.)
+
+After any later change to `nginx.conf`: `cd C:\nginx` then `.\nginx.exe -t` then `.\nginx.exe -s reload`.
+
+Check on the server itself:
+```powershell
+curl.exe -I http://localhost/                    # HTTP/1.1 200 OK  (the page)
+curl.exe http://localhost/api/health             # {"status":"ok","version":"2.0.0"}
+```
+
+---
+
+## 9. Open the firewall for the LAN only
+
+Only port 80 is opened, and only to the local network. **Do not** open 8000.
+```powershell
+New-NetFirewallRule -DisplayName "Thermo API (HTTP 80)" -Direction Inbound -Protocol TCP -LocalPort 80 `
+  -Action Allow -Profile Domain,Private -RemoteAddress LocalSubnet
+```
+- `LocalSubnet` = the server's own subnet. If users are on other subnets/VLANs, replace it with your company ranges, e.g. `-RemoteAddress 10.0.0.0/8,192.168.0.0/16`.
+- If your LAN is classified as "Public" in Windows, run `Get-NetConnectionProfile` and either change the category to Private or add `Public` to `-Profile`.
+
+---
+
+## 10. Test from another computer on the LAN
+
+Find the server name/IP: on the server run `hostname` and `ipconfig` (IPv4 address).
+
+On another PC, open the browser:
+
+| URL | Expected |
+|---|---|
+| `http://SERVER-NAME/` | The **Thermo API Tester** page. Top-right shows **"connected · API v2.0.0"** |
+| `http://SERVER-NAME/api/docs` | Interactive API documentation (Swagger) |
+| `http://SERVER-NAME/api/health` | `{"status":"ok","version":"2.0.0"}` |
+
+(`SERVER-NAME` can also be the IP address.) Then in the tester: open each of the 9 tabs, press **Load example** and **Calculate**.
+The *Backend URL* box is pre-filled with `http://SERVER-NAME/api` – leave it.
+
+To call the API from other programs (Python, Excel, etc.):
+```powershell
+curl.exe -X POST http://SERVER-NAME/api/cp_calc -H "Content-Type: application/json" `
+  -d '{\"T\":350,\"P\":101325,\"components\":[\"water\",\"hexane\"],\"zs\":[0.5,0.5]}'
+```
+(Quote escaping differs between PowerShell and cmd; in Python: `requests.post("http://SERVER-NAME/api/cp_calc", json={...})`.)
+
+---
+
+## 11. Operating it
+
+**Logs**
+- Backend: `C:\thermo-api\logs\backend.log` (rotates at 10 MB). One line per request: method, path, status, milliseconds, `rid=<request id>`.
+  An error response shown to a user contains the same `request_id` – search the log for it to find the details/traceback.
+- nginx: `C:\nginx\logs\access.log` and `error.log`.
+
+**Start / stop / restart**
+```powershell
+nssm restart ThermoApi
+nssm restart nginx
+nssm status ThermoApi
+```
+
+**Deploy an update** (new code from your PC):
+```powershell
+cd C:\thermo-api
+git pull                                     # or copy the new files over the old ones
+.\venv\Scripts\python.exe -m pip install -r Backend\requirements-dev.txt     # only needed if requirements changed
+cd Backend ; ..\venv\Scripts\python.exe -m pytest -q tests ; cd ..           # must still pass
+nssm restart ThermoApi
+```
+Frontend-only changes need no restart (just refresh the browser; press `Ctrl+F5`). Roll back with `git checkout <previous-commit>` and `nssm restart ThermoApi`.
+
+**After the server reboots:** both services start automatically. Verify with §10.
+
+### Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| Page shows "cannot reach backend" | `nssm status ThermoApi`; `curl.exe http://127.0.0.1:8000/health`; read `backend.log`. If the page is opened as a file (not through nginx) the box must contain the real URL. |
+| `502 Bad Gateway` from nginx | Backend not running or not on 8000. Start the service, check `backend.log`. |
+| `504 Gateway Timeout` / `calculation_timeout` | A calculation took > 30 s. Check the input; raise `CALC_TIMEOUT_SECONDS` (and nginx `proxy_read_timeout`, which must stay larger). |
+| `404` on `/api/...` | In `nginx.conf` the `proxy_pass http://127.0.0.1:8000/;` **must end with `/`** and `location /api/` must have the trailing slash. |
+| Page loads but `/api/docs` is blank | Service not started with `--root-path /api` (re-run the `nssm install` line). |
+| nginx will not start: `bind() to 0.0.0.0:80 failed` | Another program uses port 80 (IIS, Skype, ...). Stop it or change `listen 80;` to another port (§13) and open that port in the firewall. |
+| nginx `CreateFile() ... failed` for the page | Wrong `root` path in `nginx.conf`, or backslashes used. Use `C:/thermo-api/Frontend`. |
+| Other PCs cannot connect, server itself works | Firewall rule / network profile (§9), or a company firewall between subnets. |
+| `422 validation_error` | The input is wrong; the message says which field (e.g. counts of components and mole fractions differ). |
+| `422 unknown_component` | thermo does not know that name; use the CAS number. |
+| `422 property_unavailable` on standard enthalpy | thermo has no formation enthalpy for a component. Tick *Treat ... as 0* in the page, or send `"allow_missing_hf": true`. |
+| `pip install` fails to build scipy/numpy | The venv is not Python 3.13 64-bit. Check `.\venv\Scripts\python.exe --version`. |
+
+---
+
+## 12. Configuration reference (all optional)
+
+The service runs fine with **no** settings. To change one, add it to the service and restart:
+```powershell
+nssm set ThermoApi AppEnvironmentExtra "LOG_LEVEL=INFO" "CALC_TIMEOUT_SECONDS=30" "API_KEY=your-secret"
+nssm restart ThermoApi
+```
+(`AppEnvironmentExtra` replaces the whole list each time – always include every variable you want.)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `API_KEY` | *(unset = open)* | If set, every calculation request must send header `X-API-Key: <value>`. Without it, anyone who can reach the server may call the API. To use it with the tester page, type the key in the page's "API key" box. |
+| `CORS_ORIGINS` | `*` | Allowed browser origins. Irrelevant for the nginx setup (same origin); only matters if you host the page on a different address than the API. |
+| `CALC_TIMEOUT_SECONDS` | `30` | Per-calculation time limit (then HTTP 504). |
+| `MAX_COMPONENTS` | `0` | `0` = no limit on the number of components. |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+
+## 13. Using a different port
+If port 80 is not available, change `listen 80;` in `nginx.conf` (e.g. `listen 8080;`), reload nginx, open that port in the firewall rule,
+and use `http://SERVER-NAME:8080/` – nothing else changes.
+
+---
+
+## 14. What was checked in the code for this deployment
+
+| Area | Finding / action |
+|---|---|
+| Python 3.13 | All pinned packages have Windows x64 binary wheels for 3.13 (checked with a pip dry-run). Tests pass; they were run on 3.14 here – step 6 re-runs them on the server's real 3.13. |
+| Frontend -> API address | Previously hard-coded to `http://localhost:8000`. Now, when served over http(s), it **defaults to the same server under `/api`** (works with any host name/IP, no CORS). Still editable in the page. |
+| Reverse-proxy prefix | Backend now supports `--root-path /api`; verified that the OpenAPI/Swagger URLs become `/api/...` behind nginx. |
+| Startup | Added a **warm-up calculation** at startup (thermo needs ~2-4 s to load its data on the first call); the first user no longer waits. A warm-up failure does not stop the service. |
+| Multiple workers | Verified on Windows: `--workers 2` starts and answers requests. |
+| Open access | API key is **optional and off by default**; CORS defaults to `*`. Both unchanged, as you requested. |
+| Request size/limits | No component limit; nginx accepts bodies up to 5 MB (a 48-component request is ~2 KB). |
+| Timeouts | App limit 30 s < nginx `proxy_read_timeout` 60 s, so users get a clean JSON `504` instead of a dropped connection. |
+| Logging | One line per request with a request id; rotated by NSSM. Unexpected errors log a traceback but show users only the request id. |
+| Auto-start | Both backend and nginx are Windows services (start at boot, restart on failure). |
+| Files not in the repo | `.gitignore` keeps `venv`, caches and `.env` files out of git. |
+
+Known limitations (unchanged): a calculation that times out keeps running in its worker until finished; the three `triphase_*` endpoints use a water/organic approximation
+(see `Backend/DOCUMENTATION.md`).
+
+---
+
+## 15. Go-live checklist
+
+1. [ ] `python --version` on the server is 3.13 (64-bit); `nssm version` and `nginx -v` work.
+2. [ ] Project in `C:\thermo-api`; `venv` created with Python 3.13; packages installed.
+3. [ ] `pytest` -> `31 passed` on the server.
+4. [ ] `nssm status ThermoApi` -> `SERVICE_RUNNING`; `curl http://127.0.0.1:8000/health` OK.
+5. [ ] `nginx -t` OK; `nssm status nginx` -> `SERVICE_RUNNING`; `curl http://localhost/api/health` OK.
+6. [ ] Firewall rule for port 80 (LAN only); port 8000 **not** opened.
+7. [ ] From another LAN computer: `http://SERVER-NAME/` shows "connected"; all 9 tabs return results.
+8. [ ] Reboot the server once; confirm the page works again without touching anything.
+9. [ ] Someone else knows where `C:\thermo-api\logs` and this guide are.
