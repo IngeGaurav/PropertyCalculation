@@ -57,6 +57,18 @@
   table.comps th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 0 6px 4px 0; }
   table.comps td { padding: 0 6px 6px 0; }
   table.comps td.x { width: 40px; }
+  .tablewrap { max-height: 340px; overflow: auto; margin-bottom: 8px; }
+  .tablewrap table.comps { margin-bottom: 0; }
+  .tablewrap thead th { position: sticky; top: 0; background: var(--panel); }
+  details.bulk { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
+  details.bulk summary { color: var(--text); font-weight: 600; }
+  details.bulk textarea { width: 100%; min-height: 90px; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg); color: var(--text); font: 12.5px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
+  details.bulk .hint { font-size: 12px; color: var(--muted); margin: 6px 0; }
+  .bulkmsg { font-size: 13px; margin-left: 4px; }
+  .bulkmsg.err { color: var(--err); } .bulkmsg.ok { color: var(--ok); }
+  .check { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--text); margin: 0 0 12px; }
+  .check input { width: auto; }
   .sum { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
   .result { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
@@ -152,7 +164,16 @@ const headers = () => {
   if (key) h["X-API-Key"] = key;
   return h;
 };
-const fmt = v => (typeof v === "number" ? String(Number(v.toPrecision(10))) : String(v));
+// Accepts Python/JSON/plain lists: `components = ["a","b"]`, `[1, 2e-3]`, or values separated by commas/spaces/newlines.
+function parseList(text) {
+  let t = text.trim();
+  const open = t.indexOf("["), close = t.lastIndexOf("]");
+  if (open !== -1 && close > open) t = t.slice(open + 1, close);
+  else t = t.replace(/^[A-Za-z_][\w]*\s*=\s*/, "");
+  return t.split(/[,;\s]+/).map(x => x.trim().replace(/^["']|["']$/g, "")).filter(x => x !== "");
+}
+const fmt = v => Array.isArray(v) ? (v.length ? v.join(", ") : "none")
+  : (typeof v === "number" ? String(Number(v.toPrecision(10))) : String(v));
 
 // -------------------------------------------------------------- build a card
 function buildSection(ep, index) {
@@ -190,13 +211,47 @@ function buildSection(ep, index) {
     tbody.replaceChildren();
     ep.ex.comps.forEach(([n, z]) => addRow(n, z));
     if (!ep.noTP) { tInput.value = ep.ex.T; pInput.value = ep.ex.P; }
+    bulkMsg.textContent = "";
     updateSum();
   };
 
+  const compsTa = el("textarea", { spellcheck: "false", placeholder: '["7732-18-5", "74-82-8", "74-84-0"]' });
+  const zsTa = el("textarea", { spellcheck: "false", placeholder: "[0.5, 0.3, 0.2]   (scientific notation like 6.03E-04 is fine)" });
+  const bulkMsg = el("span", { class: "bulkmsg" });
+  const applyBulk = () => {
+    const names = parseList(compsTa.value), zsRaw = parseList(zsTa.value);
+    const zsNum = zsRaw.map(Number);
+    const bad = zsRaw.findIndex((_, i) => !Number.isFinite(zsNum[i]));
+    const fail = m => { bulkMsg.className = "bulkmsg err"; bulkMsg.textContent = m; };
+    if (!names.length) return fail("Paste the components array first.");
+    if (bad !== -1) return fail(`Mole fraction #${bad + 1} ("${zsRaw[bad]}") is not a number.`);
+    if (names.length !== zsNum.length) return fail(`Counts differ: ${names.length} components but ${zsNum.length} mole fractions.`);
+    const dup = names.find((n, i) => names.findIndex(m => m.toLowerCase() === n.toLowerCase()) !== i);
+    if (dup) return fail(`Duplicate component: ${dup}`);
+    tbody.replaceChildren();
+    names.forEach((n, i) => addRow(n, zsRaw[i]));
+    updateSum();
+    bulkMsg.className = "bulkmsg ok"; bulkMsg.textContent = `Loaded ${names.length} components into the table below.`;
+  };
+  const bulk = el("details", { class: "bulk" },
+    el("summary", {}, "Paste arrays (components + mole fractions)"),
+    el("div", { class: "hint" }, "Paste a Python or JSON list, e.g. components = [\"water\", \"74-82-8\"] and zs = [0.5, 0.5]. The name and brackets are optional; both lists must have the same length."),
+    el("label", {}, "components"), compsTa,
+    el("label", { style: "margin-top:8px" }, "zs (mole fractions)"), zsTa,
+    el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: applyBulk }, "Apply to table"), bulkMsg));
+  sec.append(bulk);
+
+  let hfBox = null;
+  if (ep.path === "/std_enthalpy_calc") {
+    hfBox = el("input", { type: "checkbox" });
+    sec.append(el("label", { class: "check" }, hfBox,
+      "Treat components with no formation enthalpy in thermo as 0 (they are listed in the result)"));
+  }
+
   sec.append(
-    el("table", { class: "comps" },
+    el("div", { class: "tablewrap" }, el("table", { class: "comps" },
       el("thead", {}, el("tr", {}, el("th", {}, "Component (name or CAS)"), el("th", {}, "Mole fraction"), el("th"))),
-      tbody),
+      tbody)),
     sumLine);
 
   const result = el("div", { class: "result", hidden: "" });
@@ -206,6 +261,7 @@ function buildSection(ep, index) {
     const comps = readComps();
     const body = { components: comps.map(c => c.name), zs: comps.map(c => parseFloat(c.z)) };
     if (!ep.noTP) { body.T = parseFloat(tInput.value); body.P = parseFloat(pInput.value); }
+    if (hfBox && hfBox.checked) body.allow_missing_hf = true;
     const problem = clientCheck(body, ep);
     if (problem) return showError(result, { code: "client_check", message: problem }, body, null);
 

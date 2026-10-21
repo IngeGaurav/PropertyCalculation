@@ -19,7 +19,7 @@ app/
   schemas.py            Request models, response models, unit tables
   thermo_service.py     All thermodynamic calculations (no FastAPI code)
   routes.py             The 9 endpoints + API-key check + timeout wrapper
-tests/test_api.py       29 tests (pytest)
+tests/test_api.py       31 tests (pytest)
 ```
 
 Original: one 770-line file where the same ~20 lines of validation were pasted into all 9 endpoints.
@@ -100,11 +100,14 @@ All endpoints except `/std_enthalpy_calc` take:
 |---|---|---|
 | `T` | number | Kelvin, `> 0`, finite. Default 423.15 |
 | `P` | number | Pascal, `> 0`, finite. Default 29411.81 |
-| `components` | list of strings | 1 to `MAX_COMPONENTS` (20) entries; names or CAS numbers; trimmed; not empty; **no duplicates** (case-insensitive) |
+| `components` | list of strings | at least 1 entry (no upper limit unless you set `MAX_COMPONENTS`); names or CAS numbers; trimmed; not empty; **no duplicates** (case-insensitive) |
 | `zs` | list of numbers | Same length as `components`; finite; none negative; sum `> 0`. Rescaled to sum 1 – `meta.zs_normalized` tells you if that happened |
 
 `/std_enthalpy_calc` takes only `components` and `zs` (it is defined at fixed 298.15 K / 101325 Pa).
 Extra fields such as `T`/`P` sent to it are ignored, so old clients keep working.
+It also accepts an optional `allow_missing_hf` (boolean, default `false`). thermo has no formation enthalpy for some chemicals
+(e.g. CAS `689-97-4`, `26519-91-5`). By default that is a `422 property_unavailable` error naming them; with `allow_missing_hf: true`
+they count as 0 J/mol (the behaviour of the original code) and are listed in the response field `missing_hf_components`, so the assumption is visible.
 
 Example:
 ```bash
@@ -125,7 +128,7 @@ Fractions are mole fractions. Values are **not rounded** any more (clients can r
 | `POST /enthalpy_calc` | `H_mix_molar`, `H_mix_mass` | J/mol, J/kg |
 | `POST /mw_calc` | `MW_liquid`, `MW_vapor`, `MW_avg` | g/mol |
 | `POST /vf_calc` | `Vapor_fraction`, `Liquid_fraction` | – |
-| `POST /std_enthalpy_calc` | `H_mix_std_molar`, `H_mix_std_mass` | J/mol, J/kg |
+| `POST /std_enthalpy_calc` | `H_mix_std_molar`, `H_mix_std_mass`, `missing_hf_components` | J/mol, J/kg |
 | `POST /triphase_cp_calc` | `Cp_aqueous`, `Cp_organic`, `Cp_vapor`, `Cp_mix` | J/mol/K |
 | `POST /triphase_mw_calc` | `MW_aqueous`, `MW_organic`, `MW_vapor`, `MW_mix` | g/mol |
 | `POST /triphase_vf_calc` | `vapor_fraction`, `aqueous_fraction`, `organic_fraction`, `liquid_fraction`, `water_in_liquid`, `organic_in_liquid` | – |
@@ -172,7 +175,7 @@ For a rigorous VLLE result you would need `thermo.FlashVLN` with an activity-coe
 - **Timeout** per calculation (default 30 s, then 504). Calculations run in a worker thread so slow flashes do not block the event loop.
 - **Caching** of component lookups (`identify`, `lru_cache`) – repeated names no longer re-query thermo's databases.
 - **Optional API-key auth** (`X-API-Key`), **CORS** control, **`/health`** endpoint.
-- **Tests**: 29 tests covering every endpoint, single-phase and liquid states, all validation rules, error codes, auth, request-id echo, and masking of unexpected errors.
+- **Tests**: 31 tests covering every endpoint, single-phase and liquid states, all validation rules, error codes, auth, request-id echo, and masking of unexpected errors.
 - **Separation of concerns**: the calculation module can be imported and tested without FastAPI.
 
 ### 5.3 Breaking changes for existing clients
@@ -202,7 +205,7 @@ Duplicate components and empty strings are now rejected (previously they were pa
 | `API_KEY` | *(unset)* | If set, all calculation endpoints require header `X-API-Key: <value>`. `/health` and `/docs` stay open. |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins, e.g. `https://app.example.com`. Restrict this in production. |
 | `CALC_TIMEOUT_SECONDS` | `30` | Per-calculation limit. |
-| `MAX_COMPONENTS` | `20` | Max components per request. |
+| `MAX_COMPONENTS` | `0` (unlimited) | Optional cap on components per request. `0` = no limit. |
 | `LOG_LEVEL` | `INFO` | Python log level. |
 
 No deployment files (Dockerfile, process-manager config, etc.) were created, as requested.

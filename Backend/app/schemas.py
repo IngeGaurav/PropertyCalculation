@@ -17,13 +17,13 @@ class Composition(BaseModel):
     components: List[str] = Field(
         default_factory=lambda: ["methane", "ethane"],
         min_length=1,
-        max_length=settings.max_components,
+        max_length=settings.max_components or None,
         description="Names or CAS numbers (e.g. 'water' or '7732-18-5')",
     )
     zs: List[float] = Field(
         default_factory=lambda: [0.5, 0.5],
         min_length=1,
-        max_length=settings.max_components,
+        max_length=settings.max_components or None,
         description="Mole fractions, same order as components. Normalised to sum 1.",
     )
 
@@ -70,6 +70,12 @@ class CPCalcInput(Composition):
 class StdEnthalpyInput(Composition):
     """Standard enthalpy is fixed at 298.15 K / 101325 Pa, so T and P are not part of the input."""
 
+    allow_missing_hf: bool = Field(
+        False,
+        description="If true, components without a formation enthalpy count as 0 J/mol "
+                    "(they are listed in `missing_hf_components`). If false, such a component is an error.",
+    )
+
 
 # ------------------------------------------------------------ response data
 class CpData(BaseModel):
@@ -99,6 +105,9 @@ class MWData(BaseModel):
 class StdEnthalpyData(BaseModel):
     H_mix_std_molar: float
     H_mix_std_mass: float
+    missing_hf_components: List[str] = Field(
+        default_factory=list, description="Components assumed 0 J/mol (only when allow_missing_hf=true)"
+    )
 
 
 class VFData(BaseModel):

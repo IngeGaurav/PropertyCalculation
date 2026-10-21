@@ -16,8 +16,8 @@ class Settings:
     api_key: Optional[str]
     # Hard limit (seconds) for one calculation before the API answers 504.
     calc_timeout_seconds: float
-    # Upper bound on components per request (protects against slow flashes).
-    max_components: int
+    # Upper bound on components per request. 0 = unlimited (the default).
+    max_components: int  # 0 means no limit
     log_level: str
 
 
@@ -26,7 +26,7 @@ def load_settings() -> Settings:
         cors_origins=_csv(os.getenv("CORS_ORIGINS", "*")),
         api_key=os.getenv("API_KEY") or None,
         calc_timeout_seconds=float(os.getenv("CALC_TIMEOUT_SECONDS", "30")),
-        max_components=int(os.getenv("MAX_COMPONENTS", "20")),
+        max_components=int(os.getenv("MAX_COMPONENTS", "0")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
     )
 

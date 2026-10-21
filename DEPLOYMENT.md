@@ -70,7 +70,7 @@ because HTTPS certificates need a name.
 | `API_KEY` | A long random string, e.g. output of `python -c "import secrets;print(secrets.token_urlsafe(32))"`. Clients send it as header `X-API-Key`. |
 | `CORS_ORIGINS` | The exact origin(s) of your frontend, e.g. `https://thermo.yourcompany.com`. Not `*`. |
 | `CALC_TIMEOUT_SECONDS` | `30` (raise only if you really have slow mixtures) |
-| `MAX_COMPONENTS` | `20` |
+| `MAX_COMPONENTS` | `0` (unlimited; set e.g. `200` if you want a safety cap) |
 | `LOG_LEVEL` | `INFO` |
 
 Keep them in a file readable only by the service user (e.g. `/etc/thermo-api.env`, `chmod 600`) – never in git.
@@ -131,7 +131,7 @@ sudo chmod 600 /etc/thermo-api.env
 sudo -u thermo /opt/thermo-api/venv/bin/pip install pytest httpx
 cd /opt/thermo-api && sudo -u thermo /opt/thermo-api/venv/bin/python -m pytest -q tests
 ```
-Expect `29 passed`. If a test fails here but passed on your PC, the cause is almost always a different
+Expect `31 passed`. If a test fails here but passed on your PC, the cause is almost always a different
 thermo/numpy version – fix the pins before going on.
 The tests read settings from the environment, so run them in a shell where `API_KEY` / `CORS_ORIGINS` are **not** exported
 (the systemd env file is not loaded by your shell, so the command above is fine). If you exported them, prefix with `env -u API_KEY`.
@@ -302,7 +302,7 @@ nginx/HTTPS layer unchanged. This guide does not require it.
 
 ## 12. Go-live checklist
 
-1. [ ] Tests pass on the server (`29 passed`).
+1. [ ] Tests pass on the server (`31 passed`).
 2. [ ] `systemctl status thermo-api` is `active (running)`; it survives `sudo reboot`.
 3. [ ] `https://api…/health` returns `ok` from outside the server.
 4. [ ] A calculation with the API key works; the same call **without** the key returns `401`.

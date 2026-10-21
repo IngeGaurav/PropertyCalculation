@@ -171,16 +171,18 @@ def std_enthalpy(req: StdEnthalpyInput) -> StdEnthalpyData:
     """Mole-fraction-weighted formation enthalpy at 298.15 K, 1 atm."""
     compounds = [identify(c) for c in req.components]
     missing = [c.name for c in compounds if c.hf is None]
-    if missing:
+    if missing and not req.allow_missing_hf:
         # The old code silently used 0 here, which produced a wrong answer.
         raise PropertyUnavailableError(
-            "Formation enthalpy (Hf) is not available for: " + ", ".join(missing),
+            "Formation enthalpy (Hf) is not available for: " + ", ".join(missing)
+            + ". Send allow_missing_hf=true to treat them as 0.",
             details={"components": missing},
         )
     zs = req.normalized_zs()
-    h = float(np.sum(zs * np.array([c.hf for c in compounds])))  # J/mol
+    h = float(np.sum(zs * np.array([c.hf or 0.0 for c in compounds])))  # J/mol
     mw = float(np.sum(zs * np.array([c.mw for c in compounds])))  # g/mol
-    return StdEnthalpyData(H_mix_std_molar=h, H_mix_std_mass=h / mw * 1000.0)
+    return StdEnthalpyData(H_mix_std_molar=h, H_mix_std_mass=h / mw * 1000.0,
+                           missing_hf_components=missing)
 
 
 # ------------------------------------------------------------------ triphase

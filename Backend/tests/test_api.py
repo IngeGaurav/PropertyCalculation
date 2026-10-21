@@ -137,3 +137,18 @@ def test_unexpected_error_is_masked(monkeypatch):
     r = client.post("/vf_calc", json=GOOD)
     assert r.status_code == 500 and "secret internals" not in r.text
     assert r.json()["error"]["code"] == "internal_error"
+
+
+def test_std_enthalpy_missing_hf_policy():
+    body = {"components": ["methane", "689-97-4"], "zs": [0.5, 0.5]}
+    r = client.post("/std_enthalpy_calc", json=body)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "property_unavailable"
+    r = client.post("/std_enthalpy_calc", json={**body, "allow_missing_hf": True})
+    assert r.status_code == 200 and r.json()["data"]["missing_hf_components"] == ["689-97-4"]
+
+
+def test_many_components_accepted():
+    comps = ["methane", "ethane", "propane", "n-butane", "n-pentane", "n-hexane", "water", "benzene",
+             "toluene", "ethylene", "propylene", "hydrogen", "carbon dioxide"] * 1
+    r = client.post("/vf_calc", json={"T": 400, "P": 200000, "components": comps, "zs": [1] * len(comps)})
+    assert r.status_code == 200, r.json()
