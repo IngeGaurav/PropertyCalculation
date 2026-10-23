@@ -34,6 +34,12 @@ class MissingWaterError(ApiError):
     code = "water_required"
 
 
+class FitError(ApiError):
+    """The data cannot be fitted (for example too few distinct x values for the requested degree)."""
+    status_code = 422
+    code = "fit_failed"
+
+
 class CalculationTimeoutError(ApiError):
     status_code = 504
     code = "calculation_timeout"

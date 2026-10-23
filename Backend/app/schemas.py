@@ -67,14 +67,42 @@ class CPCalcInput(Composition):
     P: float = Field(29411.81, gt=0, allow_inf_nan=False, description="Pressure, Pa")
 
 
-class StdEnthalpyInput(Composition):
-    """Standard enthalpy is fixed at 298.15 K / 101325 Pa, so T and P are not part of the input."""
+class EnthalpyDutyInput(Composition):
+    """Inlet and outlet conditions of one stream (same composition at both)."""
 
-    allow_missing_hf: bool = Field(
-        False,
-        description="If true, components without a formation enthalpy count as 0 J/mol "
-                    "(they are listed in `missing_hf_components`). If false, such a component is an error.",
-    )
+    T_in: float = Field(300.0, gt=0, allow_inf_nan=False, description="Inlet temperature, K")
+    P_in: float = Field(254920.0, gt=0, allow_inf_nan=False, description="Inlet pressure, Pa")
+    T_out: float = Field(368.0, gt=0, allow_inf_nan=False, description="Outlet temperature, K")
+    P_out: float = Field(254720.0, gt=0, allow_inf_nan=False, description="Outlet pressure, Pa")
+
+
+class VentFlowInput(BaseModel):
+    """Opening/flow data points, the polynomial degree, and the openings at which to estimate the flow."""
+
+    opening_values: List[float] = Field(
+        default_factory=lambda: [19.7, 49.6, 89.7], min_length=3, max_length=10000,
+        description="Valve opening data points, % (at least 3)")
+    flow_values: List[float] = Field(
+        default_factory=lambda: [48601.0, 122050.0, 220698.0], min_length=3, max_length=10000,
+        description="Flow measured at each opening, in any one consistent unit (same length as opening_values)")
+    degree: int = Field(2, ge=1, le=10, description="Requested polynomial degree: 1 linear, 2 quadratic, 3 cubic ... (maximum 10). "
+                                                    "Reduced automatically to what the number of points supports (n - 2).")
+    estimate_at: List[float] = Field(
+        default_factory=list, max_length=10000,
+        description="Openings (%) at which to estimate the flow. May be empty to get only the fit.")
+    clip_to_fit_range: bool = Field(True, description="If true, an opening outside the fitted range is clamped to the range "
+                                                      "before the polynomial is evaluated (it is still flagged as extrapolated)")
+    min_flow: float = Field(0.0, allow_inf_nan=False, description="Floor applied to every estimated flow (flow cannot be negative)")
+
+    @model_validator(mode="after")
+    def _check_data(self):
+        if len(self.opening_values) != len(self.flow_values):
+            raise ValueError(
+                f"opening_values ({len(self.opening_values)}) and flow_values ({len(self.flow_values)}) must have the same length")
+        for name in ("opening_values", "flow_values", "estimate_at"):
+            if any(not math.isfinite(v) for v in getattr(self, name)):
+                raise ValueError(f"{name} must contain finite numbers only")
+        return self
 
 
 # ------------------------------------------------------------ response data
@@ -91,23 +119,10 @@ class DensityData(BaseModel):
     phase: Optional[str] = Field(None, description="'g', 'l' or 'l/g' as reported by thermo")
 
 
-class EnthalpyData(BaseModel):
-    H_mix_molar: float
-    H_mix_mass: float
-
-
 class MWData(BaseModel):
     MW_liquid: Optional[float] = Field(None, description="null when no liquid phase is present")
     MW_vapor: Optional[float] = Field(None, description="null when no vapor phase is present")
     MW_avg: float
-
-
-class StdEnthalpyData(BaseModel):
-    H_mix_std_molar: float
-    H_mix_std_mass: float
-    missing_hf_components: List[str] = Field(
-        default_factory=list, description="Components assumed 0 J/mol (only when allow_missing_hf=true)"
-    )
 
 
 class VFData(BaseModel):
@@ -138,7 +153,113 @@ class TriphaseVFData(BaseModel):
     organic_in_liquid: float = Field(description="non-water mole fraction within the liquid")
 
 
+# ------------------------------------------------- EOS (Peng-Robinson) stream
+class EosPhase(BaseModel):
+    beta: float = Field(description="phase fraction of the total mixture")
+    MW: float = Field(description="g/mol")
+    Cp: float = Field(description="J/mol/K")
+    rho_mass: float = Field(description="kg/m^3")
+    rho_molar_kmol_m3: float = Field(description="kmol/m^3")
+
+
+class EosMixture(BaseModel):
+    MW: float = Field(description="g/mol")
+    Cp: float = Field(description="J/mol/K")
+    Cp_mass_kJ_kgK: float = Field(description="kJ/kg/K")
+    rho_mass: float = Field(description="kg/m^3")
+    rho_molar_kmol_m3: float = Field(description="kmol/m^3")
+
+
+class EosStreamData(BaseModel):
+    case: str = Field(description="phase situation found by the flash, e.g. 'vapor-only' or 'three-phase vapor-liquid-liquid (VLLE)'")
+    V: float = Field(description="vapor fraction (mole)")
+    L: float = Field(description="liquid fraction (mole), total of aqueous and organic")
+    n_phases: int
+    n_components_used: int = Field(description="components with a mole fraction above 0 (zero-fraction components are not flashed)")
+    vapor: Optional[EosPhase] = Field(None, description="null when there is no vapor")
+    aqueous: Optional[EosPhase] = Field(None, description="null when there is no aqueous liquid")
+    organic: Optional[EosPhase] = Field(None, description="null when there is no organic liquid")
+    mixture: EosMixture
+
+
+# ------------------------------------------------------ Enthalpy / heat duty
+class EnthalpyState(BaseModel):
+    vapor_fraction: float = Field(description="mole fraction")
+    molecular_weight: float = Field(description="g/mol")
+    enthalpy_molar: float = Field(description="kJ/mol")
+    enthalpy_mass: float = Field(description="kJ/kg")
+
+
+class HeatDuty(BaseModel):
+    heat_duty_molar: float = Field(description="kJ/mol; outlet minus inlet. Positive = heat absorbed (heating), negative = heat released (cooling)")
+    sp_duty: float = Field(description="kJ/kg; specific heat duty, outlet minus inlet")
+
+
+class EnthalpyDutyData(BaseModel):
+    inlet: EnthalpyState
+    outlet: EnthalpyState
+    duty: HeatDuty
+    n_components_used: int = Field(description="components with a non-negligible mole fraction (the others are not part of the calculation)")
+    ethylene_ethane_kij_override: bool = Field(
+        description="true when ethylene and ethane are both present and the calibrated binary interaction parameter 0.015 was used for that pair")
+
+
+# --------------------------------------------------------------- Vent flow fit
+class VentTerm(BaseModel):
+    power: int = Field(description="power of the opening for this term")
+    coefficient: float
+    standard_error: Optional[float] = Field(None, description="null when it cannot be computed")
+
+
+class VentRange(BaseModel):
+    min: float
+    max: float
+
+
+class VentFit(BaseModel):
+    degree_requested: int
+    degree_used: int
+    degree_capped: bool = Field(description="true if the requested degree was reduced because there are too few points")
+    n_points: int
+    equation: str
+    terms: List[VentTerm] = Field(description="highest power first (the order of Excel LINEST and numpy polyval)")
+    r_squared: Optional[float] = Field(None, description="null when all flow values are equal")
+    standard_error_y: Optional[float] = Field(None, description="standard error of the estimate (regression), flow unit; null when df_residual is 0")
+    f_statistic: Optional[float] = Field(None, description="null when undefined (exact fit, or all flow values equal)")
+    df_residual: int
+    ss_regression: float
+    ss_residual: float
+    opening_range: VentRange = Field(description="opening range the curve was fitted on")
+
+
+class VentEstimate(BaseModel):
+    opening: float = Field(description="requested opening, %")
+    opening_used: float = Field(description="opening used in the polynomial (differs from `opening` when clipped), %")
+    flow: float = Field(description="estimated flow, after the minimum-flow floor")
+    extrapolated: bool = Field(description="true if `opening` lies outside the fitted opening range")
+    floor_applied: bool = Field(description="true if the polynomial gave a flow below min_flow and the floor was used")
+
+
+class VentFlowData(BaseModel):
+    fit: VentFit
+    estimates: List[VentEstimate]
+    warnings: List[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------- envelopes
+class MetaBasic(BaseModel):
+    request_id: str
+    elapsed_ms: float
+
+
+class ApiResponseBasic(BaseModel, Generic[T_]):
+    """Envelope for endpoints that have no composition (so no `zs_normalized`)."""
+    status: str = "success"
+    data: T_
+    units: Dict[str, str]
+    meta: MetaBasic
+
+
 class Meta(BaseModel):
     request_id: str
     elapsed_ms: float
@@ -164,15 +285,37 @@ class ErrorResponse(BaseModel):
     request_id: Optional[str] = None
 
 
+class HealthResponse(BaseModel):
+    status: str = Field("ok", description="`ok` while the service is alive")
+    version: str = Field(description="deployed API version")
+
+
 # ------------------------------------------------------------------- units
 CP_UNITS = {"Cp_liquid": "J/mol/K", "Cp_vapor": "J/mol/K", "Cp_mix": "J/mol/K",
             "Vapor_fraction": "mole fraction", "Liquid_fraction": "mole fraction"}
 DENSITY_UNITS = {"rho_mix": "kg/m^3"}
-ENTHALPY_UNITS = {"H_mix_molar": "J/mol", "H_mix_mass": "J/kg"}
 MW_UNITS = {"MW_liquid": "g/mol", "MW_vapor": "g/mol", "MW_avg": "g/mol"}
-STD_ENTHALPY_UNITS = {"H_mix_std_molar": "J/mol", "H_mix_std_mass": "J/kg"}
 VF_UNITS = {"Vapor_fraction": "mole fraction", "Liquid_fraction": "mole fraction"}
 TRI_CP_UNITS = {"Cp_aqueous": "J/mol/K", "Cp_organic": "J/mol/K", "Cp_vapor": "J/mol/K",
                 "Cp_mix": "J/mol/K"}
 TRI_MW_UNITS = {"MW_aqueous": "g/mol", "MW_organic": "g/mol", "MW_vapor": "g/mol", "MW_mix": "g/mol"}
 TRI_VF_UNITS = {k: "mole fraction" for k in TriphaseVFData.model_fields}
+ENTHALPY_UNITS = {
+    "vapor_fraction": "mole fraction", "molecular_weight": "g/mol",
+    "enthalpy_molar": "kJ/mol", "enthalpy_mass": "kJ/kg",
+    "heat_duty_molar": "kJ/mol", "sp_duty": "kJ/kg", "n_components_used": "count",
+}
+VENT_UNITS = {
+    "opening": "%", "opening_used": "%", "flow": "same unit as the supplied flow_values",
+    "coefficient": "flow unit per (%)^power", "standard_error": "flow unit per (%)^power",
+    "r_squared": "dimensionless", "standard_error_y": "same unit as flow_values",
+    "f_statistic": "dimensionless", "df_residual": "count", "n_points": "count",
+    "degree_requested": "count", "degree_used": "count",
+    "ss_regression": "(flow unit)^2", "ss_residual": "(flow unit)^2",
+}
+EOS_UNITS = {
+    "V": "mole fraction", "L": "mole fraction", "n_phases": "count", "n_components_used": "count",
+    "beta": "mole fraction of the total mixture (per phase)",
+    "MW": "g/mol", "Cp": "J/mol/K", "Cp_mass_kJ_kgK": "kJ/kg/K",
+    "rho_mass": "kg/m^3", "rho_molar_kmol_m3": "kmol/m^3",
+}

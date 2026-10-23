@@ -11,10 +11,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app import api_docs
 from app.config import settings
 from app.errors import ApiError
 from app.routes import router
-from app.schemas import CPCalcInput
+from app.schemas import CPCalcInput, HealthResponse
 from app.thermo_service import cp as _warm_up_calc
 
 logging.basicConfig(
@@ -35,10 +36,10 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     lifespan=lifespan,
-    title="Thermo Property API",
-    version="2.0.0",
-    description="Heat capacity, density, enthalpy, molecular weight and phase "
-                "fractions of mixtures, powered by the `thermo` library.",
+    title=api_docs.API_TITLE,
+    version="2.3.0",
+    description=api_docs.API_DESCRIPTION,
+    openapi_tags=api_docs.TAGS,
 )
 
 app.add_middleware(
@@ -108,7 +109,15 @@ async def unhandled_handler(request: Request, exc: Exception):
 
 
 # ------------------------------------------------------------------- routes
-@app.get("/health", tags=["meta"], summary="Liveness check")
+@app.get(
+    "/health",
+    tags=[api_docs.TAG_SYSTEM],
+    summary="Health check",
+    description="Confirms that the service is running and reports the deployed version. "
+                "No request body and no authentication. Suitable for uptime monitoring.",
+    operation_id="health_check",
+    response_model=HealthResponse,
+)
 def health():
     return {"status": "ok", "version": app.version}
 

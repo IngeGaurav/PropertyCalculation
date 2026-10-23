@@ -1,7 +1,7 @@
 """All thermodynamics lives here. No FastAPI imports, so it is testable on its own.
 
 Conventions (thermo 0.6.x): molar quantities are per mol, MW is g/mol,
-Chemical.Cpl / Cpg / Hf are mass based (J/kg/K, J/kg); Chemical.Hfm and Mixture.Cplm / Cpgm / Hm are molar.
+Chemical.Cpl / Cpg are mass based (J/kg/K); Mixture.Cplm / Cpgm are molar (J/mol/K).
 """
 import math
 from dataclasses import dataclass
@@ -24,10 +24,7 @@ from .schemas import (
     CPCalcInput,
     CpData,
     DensityData,
-    EnthalpyData,
     MWData,
-    StdEnthalpyData,
-    StdEnthalpyInput,
     TriphaseCpData,
     TriphaseMWData,
     TriphaseVFData,
@@ -36,8 +33,6 @@ from .schemas import (
 
 WATER_CAS = "7732-18-5"
 PHASE_EPS = 1e-9
-STD_T = 298.15  # K
-STD_P = 101325.0  # Pa
 
 
 # ---------------------------------------------------------------- helpers
@@ -46,7 +41,6 @@ class Compound:
     name: str
     cas: str
     mw: float  # g/mol
-    hf: Optional[float]  # J/mol, formation enthalpy at 298.15 K
 
 
 @lru_cache(maxsize=1024)
@@ -62,7 +56,7 @@ def identify(name: str) -> Compound:
         raise PropertyUnavailableError(
             f"No molecular weight available for '{name}'.", details={"component": name}
         )
-    return Compound(name=name, cas=chem.CAS, mw=float(chem.MW), hf=_opt(chem.Hfm))  # molar; chem.Hf is mass based (J/kg)
+    return Compound(name=name, cas=chem.CAS, mw=float(chem.MW))
 
 
 def _opt(x) -> Optional[float]:
@@ -145,13 +139,6 @@ def density(req: CPCalcInput) -> DensityData:
     return DensityData(rho_mix=_need(st.mix.rho, "Density"), phase=st.mix.phase)
 
 
-def enthalpy(req: CPCalcInput) -> EnthalpyData:
-    st = _build(req, req.T, req.P, need_flash=False)
-    hm = _need(st.mix.Hm, "Enthalpy")  # J/mol
-    mw = _need(st.mix.MW, "Molecular weight")  # g/mol
-    return EnthalpyData(H_mix_molar=hm, H_mix_mass=hm / mw * 1000.0)
-
-
 def molecular_weight(req: CPCalcInput) -> MWData:
     st = flash(req)
     mws = st.mws
@@ -165,24 +152,6 @@ def molecular_weight(req: CPCalcInput) -> MWData:
 def vapor_fraction(req: CPCalcInput) -> VFData:
     st = flash(req)
     return VFData(Vapor_fraction=st.V, Liquid_fraction=st.L)
-
-
-def std_enthalpy(req: StdEnthalpyInput) -> StdEnthalpyData:
-    """Mole-fraction-weighted formation enthalpy at 298.15 K, 1 atm."""
-    compounds = [identify(c) for c in req.components]
-    missing = [c.name for c in compounds if c.hf is None]
-    if missing and not req.allow_missing_hf:
-        # The old code silently used 0 here, which produced a wrong answer.
-        raise PropertyUnavailableError(
-            "Formation enthalpy (Hf) is not available for: " + ", ".join(missing)
-            + ". Send allow_missing_hf=true to treat them as 0.",
-            details={"components": missing},
-        )
-    zs = req.normalized_zs()
-    h = float(np.sum(zs * np.array([c.hf or 0.0 for c in compounds])))  # J/mol
-    mw = float(np.sum(zs * np.array([c.mw for c in compounds])))  # g/mol
-    return StdEnthalpyData(H_mix_std_molar=h, H_mix_std_mass=h / mw * 1000.0,
-                           missing_hf_components=missing)
 
 
 # ------------------------------------------------------------------ triphase

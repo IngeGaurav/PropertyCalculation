@@ -18,6 +18,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 14px 16px; }
@@ -38,6 +39,30 @@
   #health.up { background: var(--ok-bg); color: var(--ok); }
   #health.down { background: var(--err-bg); color: var(--err); }
 
+  .tabbar { background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  .tabs { display: flex; gap: 4px; max-width: 1200px; margin: 0 auto; padding: 0 16px; }
+  .tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; text-align: left;
+                 padding: 12px 18px 10px; font-weight: 600; font-size: 15px; }
+  .tabs button small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  .tabs button:hover { border-color: transparent; border-bottom-color: var(--border); }
+  .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
+  .summary-line { margin: 10px 0 4px; font-size: 14px; }
+  .summary-line span { display: inline-block; margin-right: 18px; }
+  .note { font-size: 12.5px; color: var(--muted); margin: 6px 0; }
+  table.out th.r, table.out td.r { text-align: right; }
+  table.cmp td.diff { background: var(--err-bg); color: var(--err); font-weight: 600; }
+  h3.sub { margin: 20px 0 4px; font-size: 15px; }
+  .warnbox { background: var(--code-bg); border-left: 4px solid #d69e2e; border-radius: 6px; padding: 8px 12px; margin: 10px 0; font-size: 13px; }
+  .warnbox div + div { margin-top: 4px; }
+  .eq { font-family: ui-monospace, Consolas, monospace; font-size: 14px; background: var(--code-bg); border-radius: 8px; padding: 10px 12px; margin: 10px 0; overflow-x: auto; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 6px 0 4px; font-size: 14px; }
+  .stats span b { font-weight: 600; }
+  .flag { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--err-bg); color: var(--err); font-weight: 600; margin-right: 6px; }
+  .duty { display: flex; flex-wrap: wrap; gap: 14px; margin: 14px 0 6px; }
+  .duty > div { flex: 1 1 220px; border: 1px solid var(--accent); border-radius: 10px; padding: 12px 16px; background: var(--code-bg); }
+  .duty .lbl { font-size: 12px; color: var(--muted); }
+  .duty .big { font-size: 26px; font-weight: 700; font-family: ui-monospace, Consolas, monospace; }
+  .duty .unit { font-size: 13px; color: var(--muted); margin-left: 6px; font-weight: 400; }
   .layout { display: flex; gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; align-items: flex-start; }
   nav { flex: 0 0 230px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
         padding: 6px; position: sticky; top: 12px; }
@@ -109,9 +134,27 @@
   </div>
 </header>
 
-<div class="layout">
+<div class="tabbar">
+  <div class="tabs" role="tablist">
+    <button type="button" id="tabProp" class="active" role="tab">Property APIs<small>One endpoint per property · vapor–liquid model</small></button>
+    <button type="button" id="tabEos" role="tab">EOS Stream API<small>Complete stream result · Peng-Robinson, three-phase flash</small></button>
+    <button type="button" id="tabEnth" role="tab">Enthalpy API<small>Enthalpy at inlet and outlet · heat duty</small></button>
+    <button type="button" id="tabVent" role="tab">Vent API<small>Flow vs opening · polynomial fit</small></button>
+  </div>
+</div>
+
+<div class="layout" id="propPane">
   <nav id="nav" aria-label="Endpoints"></nav>
   <main id="main"></main>
+</div>
+<div class="layout" id="eosPane" hidden>
+  <main id="eosMain"></main>
+</div>
+<div class="layout" id="enthPane" hidden>
+  <main id="enthMain"></main>
+</div>
+<div class="layout" id="ventPane" hidden>
+  <main id="ventMain"></main>
 </div>
 
 <script>
@@ -122,25 +165,69 @@ const WET = { T: 350, P: 101325, comps: [["water", 0.5], ["hexane", 0.5]] };
 const GAS = { T: 423.15, P: 29411.81, comps: [["methane", 0.5], ["ethane", 0.5]] };
 
 const ENDPOINTS = [
-  { path: "/cp_calc", group: "Single / two-phase (VLE)", title: "Heat capacity",
+  { path: "/cp_calc", group: "Individual properties", title: "Heat capacity",
     desc: "Liquid, vapor and mixture Cp from a vapor-liquid flash at T and P.", ex: GAS },
-  { path: "/density_calc", group: "Single / two-phase (VLE)", title: "Density",
+  { path: "/density_calc", group: "Individual properties", title: "Density",
     desc: "Mixture density at T and P.", ex: GAS },
-  { path: "/enthalpy_calc", group: "Single / two-phase (VLE)", title: "Enthalpy",
-    desc: "Mixture enthalpy at T and P, molar and mass basis.", ex: GAS },
-  { path: "/mw_calc", group: "Single / two-phase (VLE)", title: "Molecular weight",
+  { path: "/mw_calc", group: "Individual properties", title: "Molecular weight",
     desc: "Liquid, vapor and average molecular weight.", ex: GAS },
-  { path: "/vf_calc", group: "Single / two-phase (VLE)", title: "Vapor fraction",
+  { path: "/vf_calc", group: "Individual properties", title: "Vapor fraction",
     desc: "Vapor and liquid mole fractions from the flash.", ex: GAS },
-  { path: "/std_enthalpy_calc", group: "Single / two-phase (VLE)", title: "Standard enthalpy", noTP: true,
-    desc: "Mole-weighted formation enthalpy at 298.15 K and 1 atm. T and P are not used.", ex: GAS },
-  { path: "/triphase_cp_calc", group: "Vapor / aqueous / organic (needs water)", title: "Triphase heat capacity",
+  { path: "/triphase_cp_calc", group: "Vapor / aqueous / organic split (needs water)", title: "Triphase heat capacity",
     desc: "Cp of the vapor, aqueous and organic phases. The mixture must contain water.", ex: WET },
-  { path: "/triphase_mw_calc", group: "Vapor / aqueous / organic (needs water)", title: "Triphase molecular weight",
+  { path: "/triphase_mw_calc", group: "Vapor / aqueous / organic split (needs water)", title: "Triphase molecular weight",
     desc: "Molecular weight of the vapor, aqueous and organic phases. The mixture must contain water.", ex: WET },
-  { path: "/triphase_vf_calc", group: "Vapor / aqueous / organic (needs water)", title: "Triphase fractions",
+  { path: "/triphase_vf_calc", group: "Vapor / aqueous / organic split (needs water)", title: "Triphase fractions",
     desc: "Vapor, aqueous and organic fractions of the total mixture. The mixture must contain water.", ex: WET },
 ];
+
+const LEAD_COMPONENTS = ["7732-18-5","7783-06-4","630-08-0","124-38-9","1333-74-0","74-82-8","74-86-2","74-85-1","74-84-0","74-99-7","115-07-1","74-98-6","689-97-4","106-99-0","115-11-7","106-98-9","624-64-6","106-97-8","75-28-5","591-93-5","78-79-5","542-92-7","142-29-0","563-46-2","109-66-0","109-67-1","78-78-4","287-92-3","71-43-2","693-89-0","513-81-5","592-41-6","96-37-7","110-54-3","110-82-7","26519-91-5","762-62-9","592-76-7","108-88-3","28823-41-8","628-92-2","142-82-5","100-42-5","106-42-3","100-41-4","91-20-3","124-11-8","111-84-2"];
+const LEAD_ZS = [0.269748141292868,0,6.03528399403273E-04,1.00736830732534E-04,0.258141212597959,4.00793391652614E-02,1.75879627063473E-03,0.24503640666357,0.171763402033696,1.0092770950848E-04,4.22577374255925E-03,5.02687004252303E-04,1.0010170263719E-04,3.31625297005193E-03,0,3.0130220697407E-04,2.0057870262539E-04,9.0440145713386E-04,0,1.00843087685205E-04,0,5.02652336375593E-04,3.01816734349797E-04,0,0,1.00722963353751E-04,0,0,1.60794644088582E-03,0,0,0,0,0,0,0,0,0,2.00921736353394E-04,0,0,0,1.00569467602784E-04,0,0,0,0,2.00938483526172E-04];
+
+const WH = [["water", 0.5], ["hexane", 0.5]];
+const EOS_EP = {
+  path: "/eos_stream_calc", title: "EOS stream properties", compare: true, render: showEos,
+  desc: "Peng-Robinson equation of state with a real three-phase flash. One call returns the vapor, aqueous and organic phases " +
+        "(fraction, molecular weight, Cp, density) and the mixture. Water is optional. Components with a mole fraction of 0 are skipped. " +
+        "The first call for a new set of components builds the model and can take a few seconds.",
+  ex: { T: 351, P: 101325, comps: WH },
+  examples: [
+    { label: "Water/hexane 300 K (two liquids)", T: 300, P: 101325, comps: WH },
+    { label: "Water/hexane 357 K (all vapor)", T: 357, P: 101325, comps: WH },
+    { label: "Methane/ethane gas", T: 423.15, P: 29411.81, comps: [["methane", 0.5], ["ethane", 0.5]] },
+    { label: "48-component sample stream", T: 425, P: 169612.911830353, comps: LEAD_COMPONENTS.map((c, i) => [c, LEAD_ZS[i]]) },
+  ],
+};
+
+const PT_FIELDS = [
+  { key: "T", label: "Temperature T (K)" },
+  { key: "P", label: "Pressure P (Pa)" },
+];
+const LEAD_MOLPCT = [0,0,0,0,0,0.02,0.43,60.6,37.94,0.01,0.72,0.14,0,0.05,0,0.05,0,0.04,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+const C2_STREAM = LEAD_COMPONENTS.map((c, i) => [c, LEAD_MOLPCT[i]]).filter(([, z]) => z > 0);
+const C2_COND = { T_in: 300, P_in: 254920, T_out: 368, P_out: 254720 };
+
+const ENTH_EP = {
+  path: "/eos_enthalpy_calc", title: "Enthalpy and heat duty", render: showEnthalpy,
+  fields: [
+    { key: "T_in", label: "Inlet temperature T_in (K)" },
+    { key: "P_in", label: "Inlet pressure P_in (Pa)" },
+    { key: "T_out", label: "Outlet temperature T_out (K)" },
+    { key: "P_out", label: "Outlet pressure P_out (Pa)" },
+  ],
+  desc: "Enthalpy of one stream at an inlet and an outlet condition, and the heat duty between them (outlet minus inlet), " +
+        "from a Peng-Robinson equation of state. A phase change between inlet and outlet (for example vaporisation) is included. " +
+        "Mole fractions or mole percent are both fine; they are rescaled. Components with a mole fraction of 0 are skipped. " +
+        "The first call for a new set of components builds the model and can take a few seconds.",
+  ex: { vals: C2_COND, comps: C2_STREAM },
+  examples: [
+    { label: "Pure ethylene, heating", vals: C2_COND, comps: [["ethylene", 1]] },
+    { label: "Water 300 K to 400 K (vaporisation)", vals: { T_in: 300, P_in: 101325, T_out: 400, P_out: 101325 }, comps: [["water", 1]] },
+    { label: "Water/hexane, heating", vals: { T_in: 300, P_in: 101325, T_out: 380, P_out: 101325 }, comps: [["water", 0.5], ["hexane", 0.5]] },
+    { label: "Cooling: C2 stream 368 K to 300 K", vals: { T_in: 368, P_in: 254720, T_out: 300, P_out: 254920 }, comps: C2_STREAM },
+    { label: "Full 48-component list (mol %)", vals: C2_COND, comps: LEAD_COMPONENTS.map((c, i) => [c, LEAD_MOLPCT[i]]) },
+  ],
+};
 
 // ----------------------------------------------------------------- helpers
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -181,13 +268,14 @@ function buildSection(ep, index) {
   sec.append(el("h2", {}, ep.title), el("div", { class: "path" }, "POST " + ep.path),
              el("p", { class: "desc" }, ep.desc));
 
-  const tInput = el("input", { type: "number", step: "any", value: ep.ex.T });
-  const pInput = el("input", { type: "number", step: "any", value: ep.ex.P });
-  if (!ep.noTP) {
-    sec.append(el("div", { class: "row" },
-      el("div", {}, el("label", {}, "Temperature T (K)"), tInput),
-      el("div", {}, el("label", {}, "Pressure P (Pa)"), pInput)));
-  }
+  const fields = ep.fields || PT_FIELDS;
+  const inputs = {};
+  const fieldRow = el("div", { class: "row" });
+  fields.forEach(f => {
+    inputs[f.key] = el("input", { type: "number", step: "any" });
+    fieldRow.append(el("div", {}, el("label", {}, f.label), inputs[f.key]));
+  });
+  sec.append(fieldRow);
 
   const tbody = el("tbody");
   const sumLine = el("p", { class: "sum" });
@@ -207,10 +295,11 @@ function buildSection(ep, index) {
     sumLine.textContent = `Sum of mole fractions: ${Number(total.toPrecision(10))}` +
       (off ? " (the API will rescale them to 1)" : "");
   }
-  const loadExample = () => {
+  const loadExample = (e = ep.ex) => {
     tbody.replaceChildren();
-    ep.ex.comps.forEach(([n, z]) => addRow(n, z));
-    if (!ep.noTP) { tInput.value = ep.ex.T; pInput.value = ep.ex.P; }
+    e.comps.forEach(([n, z]) => addRow(n, z));
+    const vals = e.vals || { T: e.T, P: e.P };
+    fields.forEach(f => { if (vals[f.key] !== undefined) inputs[f.key].value = vals[f.key]; });
     bulkMsg.textContent = "";
     updateSum();
   };
@@ -241,18 +330,17 @@ function buildSection(ep, index) {
     el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: applyBulk }, "Apply to table"), bulkMsg));
   sec.append(bulk);
 
-  let hfBox = null;
-  if (ep.path === "/std_enthalpy_calc") {
-    hfBox = el("input", { type: "checkbox" });
-    sec.append(el("label", { class: "check" }, hfBox,
-      "Treat components with no formation enthalpy in thermo as 0 (they are listed in the result)"));
-  }
-
   sec.append(
     el("div", { class: "tablewrap" }, el("table", { class: "comps" },
-      el("thead", {}, el("tr", {}, el("th", {}, "Component (name or CAS)"), el("th", {}, "Mole fraction"), el("th"))),
+      el("thead", {}, el("tr", {}, el("th", {}, "Component (name or CAS)"), el("th", {}, "Mole fraction (or mol %)"), el("th"))),
       tbody)),
     sumLine);
+
+  let cmpBox = null;
+  if (ep.compare) {
+    cmpBox = el("input", { type: "checkbox", checked: "" });
+    sec.append(el("label", { class: "check" }, cmpBox, "Also run the Property APIs on the same input and show the comparison"));
+  }
 
   const result = el("div", { class: "result", hidden: "" });
   const runBtn = el("button", { class: "primary", type: "button" }, "Calculate");
@@ -260,8 +348,7 @@ function buildSection(ep, index) {
   runBtn.addEventListener("click", async () => {
     const comps = readComps();
     const body = { components: comps.map(c => c.name), zs: comps.map(c => parseFloat(c.z)) };
-    if (!ep.noTP) { body.T = parseFloat(tInput.value); body.P = parseFloat(pInput.value); }
-    if (hfBox && hfBox.checked) body.allow_missing_hf = true;
+    fields.forEach(f => { body[f.key] = parseFloat(inputs[f.key].value); });
     const problem = clientCheck(body, ep);
     if (problem) return showError(result, { code: "client_check", message: problem }, body, null);
 
@@ -272,7 +359,10 @@ function buildSection(ep, index) {
       const text = await res.text();
       let json; try { json = JSON.parse(text); } catch { json = null; }
       const ms = performance.now() - t0;
-      if (res.ok && json && json.status === "success") showSuccess(result, json, body, res.status, ms);
+      if (res.ok && json && json.status === "success") {
+        (ep.render || showSuccess)(result, json, body, res.status, ms);
+        if (cmpBox && cmpBox.checked) await showComparison(result, json, body);
+      }
       else if (json && json.error) showError(result, json.error, body, { status: res.status, ms, json, rid: json.request_id });
       else showError(result, { code: "bad_response", message: `Unexpected response (HTTP ${res.status}).` }, body,
                      { status: res.status, ms, json: text });
@@ -284,15 +374,17 @@ function buildSection(ep, index) {
   });
 
   sec.append(el("div", { class: "actions" }, runBtn,
-    el("button", { type: "button", onclick: loadExample }, "Load example"),
+    el("button", { type: "button", onclick: () => loadExample() }, "Load example"),
+    ...(ep.examples || []).map(x => el("button", { type: "button", onclick: () => loadExample(x) }, x.label)),
     el("button", { type: "button", onclick: () => { addRow(); updateSum(); } }, "+ Add component")), result);
   loadExample();
   return sec;
 }
 
 function clientCheck(b, ep) {
-  if (!ep.noTP && !(b.T > 0)) return "Temperature must be a number greater than 0.";
-  if (!ep.noTP && !(b.P > 0)) return "Pressure must be a number greater than 0.";
+  for (const f of (ep.fields || PT_FIELDS)) {
+    if (!(b[f.key] > 0)) return `${f.label} must be a number greater than 0.`;
+  }
   if (!b.components.length) return "Add at least one component.";
   if (b.components.some(n => !n)) return "Every component needs a name.";
   if (b.zs.some(z => Number.isNaN(z))) return "Every component needs a mole fraction.";
@@ -325,6 +417,294 @@ function showSuccess(box, json, body, status, ms) {
   box.append(requestBlock(body, { status, json }));
 }
 
+const isNum = v => typeof v === "number" && Number.isFinite(v);
+const g4 = v => String(Number(v.toPrecision(7)));
+
+function showEos(box, json, body, status, ms) {
+  box.hidden = false; box.replaceChildren();
+  const d = json.data;
+  box.append(el("div", {}, el("span", { class: "badge ok" }, "Success · HTTP " + status),
+    el("span", { class: "meta" }, `${ms.toFixed(0)} ms round-trip · server ${json.meta.elapsed_ms} ms · request ${json.meta.request_id}`)));
+  box.append(el("div", { class: "summary-line" },
+    el("span", {}, el("strong", {}, "Detected case: "), d.case),
+    el("span", {}, el("strong", {}, "V: "), g4(d.V)),
+    el("span", {}, el("strong", {}, "L: "), g4(d.L)),
+    el("span", {}, el("strong", {}, "Phases: "), String(d.n_phases)),
+    el("span", {}, el("strong", {}, "Components flashed: "), `${d.n_components_used} of ${body.components.length}`)));
+
+  const cols = [["Vapor", d.vapor], ["Aqueous", d.aqueous], ["Organic", d.organic], ["Mixture", d.mixture]];
+  const rows = [
+    ["Phase fraction (β)", "mole fraction", p => p && p.beta, m => 1],
+    ["Molecular weight", "g/mol", p => p && p.MW, m => m.MW],
+    ["Heat capacity Cp", "J/mol/K", p => p && p.Cp, m => m.Cp],
+    ["Heat capacity Cp (mass)", "kJ/kg/K", () => null, m => m.Cp_mass_kJ_kgK],
+    ["Density", "kg/m³", p => p && p.rho_mass, m => m.rho_mass],
+    ["Molar density", "kmol/m³", p => p && p.rho_molar_kmol_m3, m => m.rho_molar_kmol_m3],
+  ];
+  const table = el("table", { class: "out" }, el("thead", {}, el("tr", {},
+    el("th", {}, "Property"), el("th", {}, "Unit"), ...cols.map(([n]) => el("th", { class: "r" }, n)))));
+  const tb = el("tbody");
+  for (const [label, unit, phaseFn, mixFn] of rows) {
+    const tr = el("tr", {}, el("td", {}, label), el("td", {}, unit));
+    cols.forEach(([name, p], i) => {
+      const v = i === 3 ? mixFn(d.mixture) : phaseFn(p);
+      tr.append(isNum(v) ? el("td", { class: "num r" }, g4(v)) : el("td", { class: "null r" }, "—"));
+    });
+    tb.append(tr);
+  }
+  table.append(tb);
+  box.append(table, el("div", { class: "note" }, "— means the phase is not present (or the value is only defined for the mixture)."));
+  if (json.meta.zs_normalized) box.append(el("div", { class: "note" }, "Your mole fractions did not sum to 1, so the API rescaled them."));
+  box.append(requestBlock(body, { status, json }));
+}
+
+function showEnthalpy(box, json, body, status, ms) {
+  box.hidden = false; box.replaceChildren();
+  const d = json.data;
+  box.append(el("div", {}, el("span", { class: "badge ok" }, "Success · HTTP " + status),
+    el("span", { class: "meta" }, `${ms.toFixed(0)} ms round-trip · server ${json.meta.elapsed_ms} ms · request ${json.meta.request_id}`)));
+
+  box.append(el("div", { class: "duty" },
+    el("div", {}, el("div", { class: "lbl" }, "Heat duty (outlet − inlet)"),
+      el("span", { class: "big" }, g4(d.duty.heat_duty_molar)), el("span", { class: "unit" }, "kJ/mol")),
+    el("div", {}, el("div", { class: "lbl" }, "Specific duty, sp_duty (outlet − inlet)"),
+      el("span", { class: "big" }, g4(d.duty.sp_duty)), el("span", { class: "unit" }, "kJ/kg"))));
+  box.append(el("div", { class: "note" }, d.duty.sp_duty >= 0
+    ? "Positive duty: heat is absorbed between inlet and outlet (heating or vaporisation)."
+    : "Negative duty: heat is released between inlet and outlet (cooling or condensation)."));
+
+  const rows = [
+    ["Temperature", "K", body.T_in, body.T_out, true],
+    ["Pressure", "Pa", body.P_in, body.P_out, true],
+    ["Vapor fraction", "mole fraction", d.inlet.vapor_fraction, d.outlet.vapor_fraction],
+    ["Molecular weight", "g/mol", d.inlet.molecular_weight, d.outlet.molecular_weight],
+    ["Enthalpy (molar)", "kJ/mol", d.inlet.enthalpy_molar, d.outlet.enthalpy_molar],
+    ["Enthalpy (mass)", "kJ/kg", d.inlet.enthalpy_mass, d.outlet.enthalpy_mass],
+  ];
+  const table = el("table", { class: "out" }, el("thead", {}, el("tr", {},
+    el("th", {}, "Property"), el("th", {}, "Unit"), el("th", { class: "r" }, "Inlet"),
+    el("th", { class: "r" }, "Outlet"), el("th", { class: "r" }, "Outlet − inlet"))));
+  const tb = el("tbody");
+  for (const [label, unit, a, b, input] of rows) {
+    tb.append(el("tr", {}, el("td", {}, label), el("td", {}, unit),
+      el("td", { class: "num r" }, g4(a)), el("td", { class: "num r" }, g4(b)),
+      el("td", { class: "num r" }, input ? "—" : g4(b - a))));
+  }
+  table.append(tb);
+  box.append(table);
+  box.append(el("div", { class: "note" }, `Components in the calculation: ${d.n_components_used} of ${body.components.length}.` +
+    (d.ethylene_ethane_kij_override ? " The calibrated ethylene–ethane interaction parameter (0.015) was applied." : "")));
+  if (json.meta.zs_normalized) box.append(el("div", { class: "note" }, "Your mole fractions did not sum to 1, so the API rescaled them."));
+  box.append(requestBlock(body, { status, json }));
+}
+
+const VENT_EXAMPLES = [
+  { label: "Reference data (3 points, degree 3)", opening: [19.7, 49.6, 89.7], flow: [48601, 122050, 220698], degree: 3, est: "5, 10, 25, 50, 75, 95, 110" },
+  { label: "Quadratic (6 points)", opening: [10, 20, 40, 60, 80, 100], flow: [350, 700, 1980, 4000, 6600, 9900], degree: 2, est: "5, 30, 55, 100, 120" },
+  { label: "Cubic (8 points)", opening: [5, 15, 25, 35, 50, 65, 80, 95], flow: [110, 420, 980, 1900, 4200, 7900, 13100, 19800], degree: 3, est: "0, 45, 99" },
+];
+
+function buildVentSection() {
+  const sec = el("section", { id: "sec102" });
+  sec.append(el("h2", {}, "Flow versus opening: polynomial fit"), el("div", { class: "path" }, "POST /vent_flow_calc"),
+    el("p", { class: "desc" }, "Enter measured points (valve opening in % and the flow at that opening, in any one consistent unit). " +
+      "The API fits a polynomial (equivalent to Excel LINEST with Flow as y and Opening as x) and estimates the flow at the openings you list. " +
+      "The degree is reduced automatically if there are too few points. An opening outside the fitted range is flagged as extrapolated and, by default, evaluated at the nearest end of the range."));
+
+  const degreeIn = el("input", { type: "number", step: "1", min: "1", max: "10", value: "2" });
+  const minFlowIn = el("input", { type: "number", step: "any", value: "0" });
+  const estIn = el("input", { placeholder: "e.g. 5, 25, 50, 95, 110", spellcheck: "false" });
+  const clipBox = el("input", { type: "checkbox", checked: "" });
+  sec.append(el("div", { class: "row" },
+    el("div", {}, el("label", {}, "Polynomial degree (1 to 10)"), degreeIn),
+    el("div", {}, el("label", {}, "Minimum flow (floor for estimates)"), minFlowIn)));
+
+  const tbody = el("tbody");
+  const addRow = (o = "", f = "") => {
+    const oIn = el("input", { type: "number", step: "any", value: o, placeholder: "opening %" });
+    const fIn = el("input", { type: "number", step: "any", value: f, placeholder: "flow" });
+    const rm = el("button", { type: "button", title: "Remove", onclick: () => tr.remove() }, "✕");
+    const tr = el("tr", {}, el("td", {}, oIn), el("td", {}, fIn), el("td", { class: "x" }, rm));
+    tbody.append(tr);
+  };
+  const readPoints = () => [...tbody.rows].map(r => ({ o: r.cells[0].firstChild.value, f: r.cells[1].firstChild.value }));
+
+  const openTa = el("textarea", { spellcheck: "false", placeholder: "[19.7, 49.6, 89.7]" });
+  const flowTa = el("textarea", { spellcheck: "false", placeholder: "[48601, 122050, 220698]" });
+  const msg = el("span", { class: "bulkmsg" });
+  const applyBulk = () => {
+    const os = parseList(openTa.value), fs = parseList(flowTa.value);
+    const fail = m => { msg.className = "bulkmsg err"; msg.textContent = m; };
+    const badO = os.findIndex(v => !Number.isFinite(Number(v))), badF = fs.findIndex(v => !Number.isFinite(Number(v)));
+    if (!os.length) return fail("Paste the openings array first.");
+    if (badO !== -1) return fail(`Opening #${badO + 1} ("${os[badO]}") is not a number.`);
+    if (badF !== -1) return fail(`Flow #${badF + 1} ("${fs[badF]}") is not a number.`);
+    if (os.length !== fs.length) return fail(`Counts differ: ${os.length} openings but ${fs.length} flows.`);
+    tbody.replaceChildren(); os.forEach((v, i) => addRow(v, fs[i]));
+    msg.className = "bulkmsg ok"; msg.textContent = `Loaded ${os.length} points into the table below.`;
+  };
+  sec.append(el("details", { class: "bulk" },
+    el("summary", {}, "Paste arrays (openings + flows)"),
+    el("div", { class: "hint" }, "Paste a Python or JSON list, for example opening_values = [19.7, 49.6, 89.7] and flow_values = [48601, 122050, 220698]. Both lists must have the same length."),
+    el("label", {}, "opening_values (%)"), openTa,
+    el("label", { style: "margin-top:8px" }, "flow_values"), flowTa,
+    el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: applyBulk }, "Apply to table"), msg)));
+
+  sec.append(el("div", { class: "tablewrap" }, el("table", { class: "comps" },
+    el("thead", {}, el("tr", {}, el("th", {}, "Opening (%)"), el("th", {}, "Flow"), el("th"))), tbody)));
+  sec.append(el("div", { class: "row" }, el("div", { style: "flex-basis:100%" },
+    el("label", {}, "Estimate the flow at these openings (%), separated by commas"), estIn)));
+  sec.append(el("label", { class: "check" }, clipBox, "Evaluate openings outside the fitted range at the nearest end of the range (they are still flagged as extrapolated)"));
+
+  const load = ex => {
+    tbody.replaceChildren(); ex.opening.forEach((o, i) => addRow(o, ex.flow[i]));
+    degreeIn.value = ex.degree; estIn.value = ex.est; msg.textContent = "";
+  };
+  const result = el("div", { class: "result", hidden: "" });
+  const runBtn = el("button", { class: "primary", type: "button" }, "Calculate");
+
+  runBtn.addEventListener("click", async () => {
+    const pts = readPoints();
+    const body = {
+      opening_values: pts.map(q => parseFloat(q.o)), flow_values: pts.map(q => parseFloat(q.f)),
+      degree: parseInt(degreeIn.value, 10), estimate_at: parseList(estIn.value).map(Number),
+      clip_to_fit_range: clipBox.checked, min_flow: parseFloat(minFlowIn.value),
+    };
+    let problem = null;
+    if (pts.length < 3) problem = "Enter at least 3 data points.";
+    else if (body.opening_values.some(Number.isNaN) || body.flow_values.some(Number.isNaN)) problem = "Every point needs a numeric opening and a numeric flow.";
+    else if (!(body.degree >= 1 && body.degree <= 10)) problem = "The degree must be a whole number from 1 to 10.";
+    else if (body.estimate_at.some(v => !Number.isFinite(v))) problem = "The estimate openings must be numbers separated by commas.";
+    else if (!Number.isFinite(body.min_flow)) problem = "The minimum flow must be a number.";
+    if (problem) return showError(result, { code: "client_check", message: problem }, body, null);
+
+    runBtn.disabled = true; runBtn.textContent = "Calculating…";
+    const t0 = performance.now();
+    try {
+      const res = await fetch(baseUrl() + "/vent_flow_calc", { method: "POST", headers: headers(), body: JSON.stringify(body) });
+      const text = await res.text();
+      let json; try { json = JSON.parse(text); } catch { json = null; }
+      const ms = performance.now() - t0;
+      if (res.ok && json && json.status === "success") showVent(result, json, body, res.status, ms);
+      else if (json && json.error) showError(result, json.error, body, { status: res.status, ms, json, rid: json.request_id });
+      else showError(result, { code: "bad_response", message: `Unexpected response (HTTP ${res.status}).` }, body, { status: res.status, ms, json: text });
+    } catch (e) {
+      showError(result, { code: "network_error", message: `Could not reach ${baseUrl()}. Check that the backend is running and the URL is right.` }, body, null);
+    } finally { runBtn.disabled = false; runBtn.textContent = "Calculate"; }
+  });
+
+  sec.append(el("div", { class: "actions" }, runBtn,
+    el("button", { type: "button", onclick: () => load(VENT_EXAMPLES[0]) }, "Load example"),
+    ...VENT_EXAMPLES.slice(1).map(x => el("button", { type: "button", onclick: () => load(x) }, x.label)),
+    el("button", { type: "button", onclick: () => addRow() }, "+ Add point")), result);
+  load(VENT_EXAMPLES[0]);
+  return sec;
+}
+
+function showVent(box, json, body, status, ms) {
+  box.hidden = false; box.replaceChildren();
+  const d = json.data, f = d.fit;
+  box.append(el("div", {}, el("span", { class: "badge ok" }, "Success · HTTP " + status),
+    el("span", { class: "meta" }, `${ms.toFixed(0)} ms round-trip · server ${json.meta.elapsed_ms} ms · request ${json.meta.request_id}`)));
+
+  box.append(el("div", { class: "eq" }, f.equation));
+  const stat = (label, v) => el("span", {}, label + ": ", el("b", {}, v === null ? "n/a" : g4(v)));
+  box.append(el("div", { class: "stats" },
+    el("span", {}, "Degree used: ", el("b", {}, f.degree_capped ? `${f.degree_used} (requested ${f.degree_requested})` : String(f.degree_used))),
+    stat("R²", f.r_squared), stat("SE(y)", f.standard_error_y), stat("F", f.f_statistic),
+    el("span", {}, "df residual: ", el("b", {}, String(f.df_residual))),
+    el("span", {}, "Points: ", el("b", {}, String(f.n_points))),
+    el("span", {}, "Fitted opening range: ", el("b", {}, `${g4(f.opening_range.min)} to ${g4(f.opening_range.max)} %`))));
+
+  if (d.warnings.length) {
+    const w = el("div", { class: "warnbox" });
+    d.warnings.forEach(t => w.append(el("div", {}, t)));
+    box.append(w);
+  }
+
+  const ct = el("table", { class: "out" }, el("thead", {}, el("tr", {},
+    el("th", {}, "Power of opening"), el("th", { class: "r" }, "Coefficient"), el("th", { class: "r" }, "Standard error"))));
+  const cb = el("tbody");
+  f.terms.forEach(t => cb.append(el("tr", {}, el("td", {}, String(t.power)),
+    el("td", { class: "num r" }, fmt(t.coefficient)),
+    t.standard_error === null ? el("td", { class: "null r" }, "n/a") : el("td", { class: "num r" }, g4(t.standard_error)))));
+  ct.append(cb);
+  box.append(el("h3", { class: "sub" }, "Coefficients (highest power first)"), ct);
+
+  if (d.estimates.length) {
+    const et = el("table", { class: "out" }, el("thead", {}, el("tr", {},
+      el("th", { class: "r" }, "Opening (%)"), el("th", { class: "r" }, "Opening used (%)"), el("th", { class: "r" }, "Estimated flow"), el("th", {}, "Notes"))));
+    const eb = el("tbody");
+    d.estimates.forEach(e => {
+      const notes = el("td", {});
+      if (e.extrapolated) notes.append(el("span", { class: "flag" }, "extrapolated"));
+      if (e.opening_used !== e.opening) notes.append(el("span", { class: "meta" }, "evaluated at the range end"));
+      if (e.floor_applied) notes.append(el("span", { class: "flag" }, "raised to minimum flow"));
+      eb.append(el("tr", {}, el("td", { class: "num r" }, g4(e.opening)), el("td", { class: "num r" }, g4(e.opening_used)),
+        el("td", { class: "num r" }, g4(e.flow)), notes));
+    });
+    et.append(eb);
+    box.append(el("h3", { class: "sub" }, "Estimated flow"), et);
+  }
+  box.append(el("div", { class: "note" }, "Flow, SE(y) and the coefficients are in the unit of the flow values you entered; nothing is converted."));
+  box.append(requestBlock(body, { status, json }));
+}
+
+async function callApi(path, body) {
+  try {
+    const r = await fetch(baseUrl() + path, { method: "POST", headers: headers(), body: JSON.stringify(body) });
+    const j = await r.json();
+    return r.ok && j.status === "success" ? { data: j.data } : { error: j.error ? j.error.message : "HTTP " + r.status };
+  } catch { return { error: "network error" }; }
+}
+
+async function showComparison(box, eosJson, body) {
+  const title = el("h3", { class: "sub" }, "Comparison: Property APIs vs EOS Stream API");
+  const wrap = el("div", {}, title, el("div", { class: "note" }, "Running the Property APIs on the same input…"));
+  box.append(wrap);
+  const [cp, rho, mw, vf, tri] = await Promise.all(
+    ["/cp_calc", "/density_calc", "/mw_calc", "/vf_calc", "/triphase_vf_calc"].map(p => callApi(p, body)));
+  const n = eosJson.data, o = x => (x && x.data) || {};
+  const phaseWords = { g: "vapor", l: "liquid", "l/g": "vapor + liquid" };
+  const rows = [
+    ["Vapor fraction", "mole fraction", o(vf).Vapor_fraction, n.V],
+    ["Liquid fraction", "mole fraction", o(vf).Liquid_fraction, n.L],
+    ["Aqueous fraction (of total)", "mole fraction", o(tri).aqueous_fraction, n.aqueous ? n.aqueous.beta : 0],
+    ["Organic fraction (of total)", "mole fraction", o(tri).organic_fraction, n.organic ? n.organic.beta : 0],
+    ["Mixture molecular weight", "g/mol", o(mw).MW_avg, n.mixture.MW],
+    ["Mixture Cp", "J/mol/K", o(cp).Cp_mix, n.mixture.Cp],
+    ["Mixture density", "kg/m³", o(rho).rho_mix, n.mixture.rho_mass],
+    ["Vapor molecular weight", "g/mol", o(mw).MW_vapor, n.vapor ? n.vapor.MW : null],
+    ["Vapor Cp", "J/mol/K", o(cp).Cp_vapor, n.vapor ? n.vapor.Cp : null],
+  ];
+  const table = el("table", { class: "out cmp" }, el("thead", {}, el("tr", {},
+    el("th", {}, "Property"), el("th", {}, "Unit"), el("th", { class: "r" }, "Property APIs"),
+    el("th", { class: "r" }, "EOS Stream API"), el("th", { class: "r" }, "Difference"), el("th", { class: "r" }, "%"))));
+  const tb = el("tbody");
+  for (const [label, unit, a, b] of rows) {
+    const tr = el("tr", {}, el("td", {}, label), el("td", {}, unit));
+    tr.append(isNum(a) ? el("td", { class: "num r" }, g4(a)) : el("td", { class: "null r" }, "n/a"));
+    tr.append(isNum(b) ? el("td", { class: "num r" }, g4(b)) : el("td", { class: "null r" }, "n/a"));
+    if (isNum(a) && isNum(b)) {
+      const diff = b - a, pct = a !== 0 ? diff / Math.abs(a) * 100 : null;
+      const big = pct === null ? Math.abs(diff) > 1e-6 : Math.abs(pct) > 1;
+      tr.append(el("td", { class: "num r" + (big ? " diff" : "") }, g4(diff)),
+                el("td", { class: "num r" + (big ? " diff" : "") }, pct === null ? "—" : pct.toFixed(2) + " %"));
+    } else tr.append(el("td", { class: "null r" }, "—"), el("td", { class: "null r" }, "—"));
+    tb.append(tr);
+  }
+  tb.append(el("tr", {}, el("td", {}, "Phase state"), el("td", {}, ""),
+    el("td", { class: "r" }, rho.error ? "n/a" : (phaseWords[o(rho).phase] || String(o(rho).phase))),
+    el("td", { class: "r", colspan: "3" }, n.case)));
+  table.append(tb);
+  const errs = [["heat capacity", cp], ["density", rho], ["molecular weight", mw], ["vapor fraction", vf]].filter(([, r]) => r.error);
+  wrap.replaceChildren(title, table,
+    el("div", { class: "note" }, "Differences above 1 % are highlighted. The Property APIs use a vapor–liquid model " +
+      "(their aqueous/organic split is an approximation); the EOS Stream API uses a Peng-Robinson equation of state with a real three-phase flash."));
+  if (tri.error) wrap.append(el("div", { class: "note" }, "The aqueous/organic rows of the Property APIs need water in the mixture (" + tri.error + ")."));
+  errs.forEach(([name, r]) => wrap.append(el("div", { class: "note" }, `Property API (${name}) failed: ${r.error}`)));
+}
+
 function showError(box, error, body, extra) {
   box.hidden = false; box.replaceChildren();
   const status = extra ? " · HTTP " + extra.status : "";
@@ -353,6 +733,32 @@ function select(i) {
   store.set("thermo.tab", String(i));
 }
 select(Math.min(+store.get("thermo.tab", "0") || 0, ENDPOINTS.length - 1));
+
+// ---------------------------------------------------------- tab 2: EOS Stream API
+const eosSection = buildSection(EOS_EP, 100);
+eosSection.classList.add("active");
+$("#eosMain").append(eosSection);
+
+// ---------------------------------------------------------- tab 3: Enthalpy API
+const enthSection = buildSection(ENTH_EP, 101);
+enthSection.classList.add("active");
+$("#enthMain").append(enthSection);
+
+// ---------------------------------------------------------- tab 4: Vent API
+$("#ventMain").append((() => { const v = buildVentSection(); v.classList.add("active"); return v; })());
+
+const MODES = { prop: ["#propPane", "#tabProp"], eos: ["#eosPane", "#tabEos"], enth: ["#enthPane", "#tabEnth"], vent: ["#ventPane", "#tabVent"] };
+function setMode(m) {
+  for (const [name, [pane, tab]] of Object.entries(MODES)) {
+    $(pane).hidden = name !== m;
+    $(tab).classList.toggle("active", name === m);
+    $(tab).setAttribute("aria-selected", String(name === m));
+  }
+  store.set("thermo.mode", m);
+}
+for (const [name, [, tab]] of Object.entries(MODES)) $(tab).addEventListener("click", () => setMode(name));
+const savedMode = store.get("thermo.mode", "prop");
+setMode(savedMode in MODES ? savedMode : "prop");
 
 // --------------------------------------------------------------- connection
 // Served by nginx (http/https): call the API on the same server under /api (no CORS involved).

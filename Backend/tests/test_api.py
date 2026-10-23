@@ -9,7 +9,7 @@ client = TestClient(app, raise_server_exceptions=False)
 GOOD = {"T": 423.15, "P": 29411.81, "components": ["methane", "ethane"], "zs": [0.5, 0.5]}
 WET = {"T": 350, "P": 101325, "components": ["7732-18-5", "hexane"], "zs": [0.5, 0.5]}
 STEAM = {"T": 500, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5]}
-ALL = ["cp_calc", "density_calc", "enthalpy_calc", "mw_calc", "vf_calc"]
+ALL = ["cp_calc", "density_calc", "mw_calc", "vf_calc"]
 
 
 def test_health():
@@ -36,15 +36,8 @@ def test_mw_in_g_per_mol():
     assert d["MW_avg"] == pytest.approx(23.056, rel=1e-3)
 
 
-def test_enthalpy_mass_matches_molar():
-    d = client.post("/enthalpy_calc", json=GOOD).json()["data"]
-    assert d["H_mix_mass"] == pytest.approx(d["H_mix_molar"] / 23.05575 * 1000, rel=1e-3)
 
 
-def test_std_enthalpy():
-    r = client.post("/std_enthalpy_calc", json={"components": ["methane", "ethane"], "zs": [0.5, 0.5]})
-    assert r.status_code == 200
-    assert r.json()["data"]["H_mix_std_molar"] == pytest.approx(-79450, rel=0.01)
 
 
 def test_zs_are_normalised_and_flagged():
@@ -139,12 +132,6 @@ def test_unexpected_error_is_masked(monkeypatch):
     assert r.json()["error"]["code"] == "internal_error"
 
 
-def test_std_enthalpy_missing_hf_policy():
-    body = {"components": ["methane", "689-97-4"], "zs": [0.5, 0.5]}
-    r = client.post("/std_enthalpy_calc", json=body)
-    assert r.status_code == 422 and r.json()["error"]["code"] == "property_unavailable"
-    r = client.post("/std_enthalpy_calc", json={**body, "allow_missing_hf": True})
-    assert r.status_code == 200 and r.json()["data"]["missing_hf_components"] == ["689-97-4"]
 
 
 def test_many_components_accepted():
