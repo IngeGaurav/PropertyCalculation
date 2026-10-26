@@ -1,5 +1,6 @@
 """Request and response models (the public contract of the API)."""
 import math
+import re
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 import numpy as np
@@ -11,20 +12,41 @@ T_ = TypeVar("T_")
 
 
 # ----------------------------------------------------------------- requests
+_CAS_FORMAT = re.compile(r"^\d{2,7}-\d{2}-\d$")
+
+
+def cas_problem(value: str) -> Optional[str]:
+    """Why `value` is not an acceptable CAS registry number, or None if it is one.
+
+    A CAS number is three groups of digits (2 to 7, then 2, then 1) joined by hyphens, for example 7732-18-5.
+    The last digit is a check digit, so a typing error such as 7732-18-4 is detected.
+    """
+    if not _CAS_FORMAT.match(value):
+        if re.search(r"[A-Za-z]", value):
+            return "a name, not a CAS number"
+        return "not in CAS format (three groups of digits such as 7732-18-5)"
+    digits = value.replace("-", "")
+    total = sum((i + 1) * int(d) for i, d in enumerate(reversed(digits[:-1])))
+    if total % 10 != int(digits[-1]):
+        return "invalid CAS check digit (typing error?)"
+    return None
+
+
 class Composition(BaseModel):
     """Components + mole fractions, with all composition validation in one place."""
 
     components: List[str] = Field(
-        default_factory=lambda: ["methane", "ethane"],
+        default_factory=lambda: ["74-82-8", "74-84-0"],  # methane, ethane
         min_length=1,
         max_length=settings.max_components or None,
-        description="Names or CAS numbers (e.g. 'water' or '7732-18-5')",
+        description="CAS numbers only, for example '7732-18-5' for water. Names are rejected.",
     )
     zs: List[float] = Field(
         default_factory=lambda: [0.5, 0.5],
         min_length=1,
         max_length=settings.max_components or None,
-        description="Mole fractions, same order as components. Normalised to sum 1.",
+        description="Mole fractions (not mole percent): moles of each component divided by the total moles, "
+                    "same order as components. They should add up to 1; small differences are rescaled.",
     )
 
     @field_validator("components")
@@ -32,9 +54,12 @@ class Composition(BaseModel):
     def _clean_components(cls, v: List[str]) -> List[str]:
         v = [c.strip() for c in v]
         if any(not c for c in v):
-            raise ValueError("component names cannot be empty")
-        lowered = [c.lower() for c in v]
-        if len(set(lowered)) != len(lowered):
+            raise ValueError("components cannot be empty")
+        bad = [f"'{c}' ({cas_problem(c)})" for c in v if cas_problem(c)]
+        if bad:
+            raise ValueError("components must be CAS numbers such as 7732-18-5 (water); names are not accepted. "
+                             "Not accepted: " + ", ".join(bad))
+        if len(set(v)) != len(v):
             raise ValueError("duplicate components are not allowed")
         return v
 
@@ -84,7 +109,8 @@ class VentFlowInput(BaseModel):
         description="Valve opening data points, % (at least 3)")
     flow_values: List[float] = Field(
         default_factory=lambda: [48601.0, 122050.0, 220698.0], min_length=3, max_length=10000,
-        description="Flow measured at each opening, in any one consistent unit (same length as opening_values)")
+        description="Flow measured at each opening, in the unit of your data (for example kg/h). The response uses the same "
+                    "unit; nothing is converted. Same length as opening_values")
     degree: int = Field(2, ge=1, le=10, description="Requested polynomial degree: 1 linear, 2 quadratic, 3 cubic ... (maximum 10). "
                                                     "Reduced automatically to what the number of points supports (n - 2).")
     estimate_at: List[float] = Field(
@@ -306,9 +332,9 @@ ENTHALPY_UNITS = {
     "heat_duty_molar": "kJ/mol", "sp_duty": "kJ/kg", "n_components_used": "count",
 }
 VENT_UNITS = {
-    "opening": "%", "opening_used": "%", "flow": "same unit as the supplied flow_values",
+    "opening": "%", "opening_used": "%", "flow": "unit of the supplied flow_values (not converted)",
     "coefficient": "flow unit per (%)^power", "standard_error": "flow unit per (%)^power",
-    "r_squared": "dimensionless", "standard_error_y": "same unit as flow_values",
+    "r_squared": "dimensionless", "standard_error_y": "unit of the supplied flow_values",
     "f_statistic": "dimensionless", "df_residual": "count", "n_points": "count",
     "degree_requested": "count", "degree_used": "count",
     "ss_regression": "(flow unit)^2", "ss_residual": "(flow unit)^2",

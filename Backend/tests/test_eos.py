@@ -10,7 +10,7 @@ from main import app
 client = TestClient(app, raise_server_exceptions=False)
 URL = "/eos_stream_calc"
 
-WH = {"components": ["water", "hexane"], "zs": [0.5, 0.5]}  # water / hexane
+WH = {"components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5]}  # water / hexane
 
 
 def post(T, P, **body):
@@ -32,7 +32,7 @@ def test_envelope_matches_the_existing_endpoints():
 
 
 def test_vapor_only_gas():
-    d = data(423.15, 29411.81, components=["methane", "ethane"], zs=[0.5, 0.5])
+    d = data(423.15, 29411.81, components=["74-82-8", "74-84-0"], zs=[0.5, 0.5])
     assert d["case"] == "vapor-only" and d["V"] == pytest.approx(1.0)
     assert d["vapor"] and d["aqueous"] is None and d["organic"] is None
     assert d["mixture"]["MW"] == pytest.approx(23.056, rel=1e-3)
@@ -69,44 +69,36 @@ def test_phase_fractions_sum_to_one():
         assert total == pytest.approx(1.0, abs=1e-6)
 
 
-def test_names_and_cas_give_identical_results():
-    a = data(300, 101325, **WH)
-    b = data(300, 101325, components=["7732-18-5", "110-54-3"], zs=[0.5, 0.5])
-    assert a == b
 
 
 def test_component_order_does_not_matter():
     a = data(300, 101325, **WH)
-    b = data(300, 101325, components=["hexane", "water"], zs=[0.5, 0.5])
+    b = data(300, 101325, components=["110-54-3", "7732-18-5"], zs=[0.5, 0.5])
     assert a["aqueous"]["MW"] == pytest.approx(b["aqueous"]["MW"])
     assert a["organic"]["beta"] == pytest.approx(b["organic"]["beta"])
 
 
 def test_zero_fraction_components_are_skipped_with_identical_result():
     base = data(300, 101325, **WH)
-    padded = data(300, 101325, components=["water", "propane", "hexane", "ethane"], zs=[0.5, 0, 0.5, 0])
+    padded = data(300, 101325, components=["7732-18-5", "74-98-6", "110-54-3", "74-84-0"], zs=[0.5, 0, 0.5, 0])
     assert base["n_components_used"] == 2 and padded["n_components_used"] == 2
     assert padded["mixture"] == pytest.approx(base["mixture"])
 
 
 def test_unnormalised_fractions_are_rescaled_and_flagged():
-    r = post(300, 101325, components=["water", "hexane"], zs=[1, 1])
+    r = post(300, 101325, components=["7732-18-5", "110-54-3"], zs=[1, 1])
     assert r.status_code == 200 and r.json()["meta"]["zs_normalized"] is True
 
 
-def test_same_chemical_given_twice_is_merged():
-    a = data(300, 101325, **WH)
-    b = data(300, 101325, components=["water", "7732-18-5", "hexane"], zs=[0.25, 0.25, 0.5])
-    assert b["aqueous"]["beta"] == pytest.approx(a["aqueous"]["beta"])
 
 
 def test_single_component():
-    d = data(300, 101325, components=["water"], zs=[1])
+    d = data(300, 101325, components=["7732-18-5"], zs=[1])
     assert d["case"].startswith("liquid-only") and d["aqueous"] is not None
 
 
 def test_water_not_required():
-    d = data(300, 101325, components=["benzene", "toluene"], zs=[0.5, 0.5])
+    d = data(300, 101325, components=["71-43-2", "108-88-3"], zs=[0.5, 0.5])
     assert d["aqueous"] is None and d["organic"] is not None
 
 
@@ -115,7 +107,7 @@ def test_water_not_required():
     {"zs": [-1, 2]},
     {"T": -5},
     {"P": 0},
-    {"components": ["water", "Water"]},
+    {"components": ["7732-18-5", "7732-18-5"]},
 ])
 def test_validation_errors_use_the_standard_envelope(patch):
     body = {"T": 300, "P": 101325, **WH, **patch}
@@ -125,14 +117,14 @@ def test_validation_errors_use_the_standard_envelope(patch):
 
 
 def test_unknown_component():
-    r = post(300, 101325, components=["water", "notachemical"], zs=[0.5, 0.5])
+    r = post(300, 101325, components=["7732-18-5", "9999-99-9"], zs=[0.5, 0.5])
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "unknown_component"
-    assert r.json()["error"]["details"] == {"component": "notachemical"}
+    assert r.json()["error"]["details"] == {"component": "9999-99-9"}
 
 
 def test_zero_fraction_unknown_component_is_still_rejected():
-    r = post(300, 101325, components=["water", "notachemical"], zs=[1, 0])
+    r = post(300, 101325, components=["7732-18-5", "9999-99-9"], zs=[1, 0])
     assert r.status_code == 422 and r.json()["error"]["code"] == "unknown_component"
 
 

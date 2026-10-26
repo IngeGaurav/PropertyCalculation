@@ -12,7 +12,7 @@ Thermodynamics as in the reference:
   makes the outlet vapor fraction of C2 streams too low and the duty about 42 % wrong against the plant
   reference; 0.015 narrows that to about 9 %.
 
-Changes made for use behind an API (same as `eos_service`): components are resolved to CAS numbers, zero and
+Changes made for use behind an API (same as `eos_service`): components are CAS numbers (validated by the request model), zero and
 negligible mole fractions are removed before the flash, the same chemical given twice is merged, models are
 cached (bounded, thread-safe), and failures are raised as `ApiError` subclasses.
 """

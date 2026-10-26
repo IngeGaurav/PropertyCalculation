@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 2.3.0 |
+| **Version** | 3.0.0 |
 | **Audience** | Developers maintaining or extending the backend |
 | **Related documents** | [01-Deployment-Guide.md](01-Deployment-Guide.md), [02-API-Reference.md](02-API-Reference.md) |
 
@@ -72,7 +72,7 @@ Backend/
     ├── test_eos.py         EOS Stream API
     ├── test_enthalpy.py    Enthalpy API
     ├── test_vent.py        Vent API
-    └── test_openapi.py     The generated API documentation (132 tests in total)
+    └── test_openapi.py     The generated API documentation (236 tests in total after release 3.0.0)
 ```
 
 | Module | Responsibility | Depends on |
@@ -167,13 +167,13 @@ The success body is restructured, so **clients written for 1.x must be updated**
 
 ## 8. Testing
 
-The suite (`Backend/tests/`, 132 tests in five files) uses FastAPI's `TestClient` and covers:
+The suite (`Backend/tests/`, 236 tests in six files) uses FastAPI's `TestClient` and covers:
 
 | Area | Tests |
 |---|---|
 | Each Property API, success | Basic endpoints, single-phase and liquid states, triphase endpoints |
 | Physical consistency | MW in g/mol, fractions sum to 1, phases `null` when absent |
-| Water handling | By name or CAS; missing water error |
+| Water handling | By CAS number; missing water error |
 | Validation | Mismatched lengths, negative or zero fractions, `T`/`P` ≤ 0, empty list, duplicates, wrong types, malformed JSON |
 | Normalisation | Fractions not summing to 1 are rescaled and flagged |
 | Errors | Unknown component, 404, 405, response envelope, masking of unexpected errors |
@@ -181,11 +181,11 @@ The suite (`Backend/tests/`, 132 tests in five files) uses FastAPI's `TestClient
 | API key | Enforced when configured; `/health` stays open |
 | Many components | Large component lists accepted |
 | EOS Stream API | Vapor-only, liquid-liquid, vapor+aqueous and all-vapor cases; phase fractions sum to 1; names and CAS give identical results; component order and zero fractions do not change the result; duplicates merged; single component; flash failure becomes `422`; cache reuse and bound; the 48-component reference stream matches the reference script |
-| Enthalpy API | Agreement with the reference script for five cases (the lead's C2 stream, pure ethylene, water vaporisation, water/hexane, no change); duty equals outlet minus inlet; molar and mass basis agree; swapping inlet and outlet reverses the sign; zero entries skipped; mol % equals fractions; names, CAS and order equivalent; duplicates merged; all validation rules; flash failure names the condition; cache reuse; the 48-component list |
+| Enthalpy API | Agreement with the reference script for five cases (the lead's C2 stream, pure ethylene, water vaporisation, water/hexane, no change); duty equals outlet minus inlet; molar and mass basis agree; swapping inlet and outlet reverses the sign; zero entries skipped; order equivalent; all validation rules; flash failure names the condition; cache reuse; the 48-component list |
 | Vent API | Agreement with the reference module (the degree-capped reference data, a quadratic and a cubic fit); the exact-line, constant-flow, floor and unclipped cases; coefficient order and values against `numpy.polyfit`; standard errors against the textbook formula; clipping, extrapolation flags and the flow floor; undefined statistics are `null` and every response is strict JSON; degree-cap and extrapolation warnings; envelope without `zs_normalized`; all validation rules including infinite numbers; `fit_failed` for too few distinct openings; a 5000-point data set |
 | Generated documentation | Exact set of endpoints; no enthalpy endpoint; every endpoint has tag, summary, description, operation id, request example, success example and documented errors; the documented examples equal the real responses |
 
-Run: `cd Backend` then `python -m pytest -q tests` (expected `132 passed`). The tests read settings from the environment, so run them where `API_KEY` and `CORS_ORIGINS` are not set.
+Run: `cd Backend` then `python -m pytest -q tests` (expected `236 passed`). The tests read settings from the environment, so run them where `API_KEY` and `CORS_ORIGINS` are not set.
 
 ---
 
@@ -339,3 +339,25 @@ Changes made for use behind an API:
 | Capping the degree is silent | `degree_requested`, `degree_used`, `degree_capped` and a warning | The caller must know the fit differs from the request |
 | Extrapolation is a returned boolean | Per estimate: `extrapolated`, `opening_used`, `floor_applied`, plus summary warnings | The caller sees exactly what was evaluated |
 | Printed text | Structured response with units | Same contract as the other endpoints |
+
+---
+
+## 15. Release 3.0.0: CAS-only components and mole fractions
+
+### 15.1 What changed
+
+| Change | Detail |
+|---|---|
+| Components are CAS numbers only | The shared request model (`schemas.py`, `Composition`) checks every entry: CAS format, check digit, duplicates. A name returns `422 validation_error` whose `details` name the entry and the reason (`a name, not a CAS number`, `not in CAS format`, `invalid CAS check digit (typing error?)`, `duplicate`). A valid but unknown number (for example `9999-99-9`) returns `422 unknown_component`. The rule applies to every endpoint that takes components. |
+| `zs` are mole fractions | Documentation and field descriptions state mole fractions (0.25, not 25). Examples use fractions. The small-difference rescale (`meta.zs_normalized`) is unchanged. |
+| Unit wording | The Vent API takes flows in the user's unit and returns every flow value in that same unit. The phrase "any one consistent unit" was removed. |
+| Frontend | CAS number input with name hint (hint only, never sent); rows with a name or invalid CAS are highlighted and nothing is sent; pasted arrays are checked; examples use CAS numbers and fractions. |
+| Vendor guide | `docs/Thermo-API-Integration-Guide` now covers only the three vendor APIs (stream properties, enthalpy and heat duty, flow versus opening), with the full response of each, a glossary and the CAS rule. |
+
+### 15.2 Compatibility
+
+This release is **breaking** for any client that sends names. Such a request now returns HTTP 422. Clients must send CAS numbers (the web tester shows the name for each CAS number it knows). Mole percent was never a separate input mode; values that add up to 100 are still rescaled, but the documentation no longer offers that.
+
+### 15.3 Tests
+
+`tests/test_cas_input.py` (new) checks, for every endpoint, that names and malformed numbers are rejected, that check-digit typos are caught, that unknown numbers give `unknown_component`, that all 48 plant CAS numbers are valid, and that the generated OpenAPI text says CAS only and mole fractions. Full suite: 236 passed.

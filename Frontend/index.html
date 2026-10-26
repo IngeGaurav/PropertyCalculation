@@ -58,6 +58,8 @@
   .stats { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 6px 0 4px; font-size: 14px; }
   .stats span b { font-weight: 600; }
   .flag { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--err-bg); color: var(--err); font-weight: 600; margin-right: 6px; }
+  input.bad { border-color: var(--err); outline: 2px solid var(--err); outline-offset: -1px; }
+  .nm { font-size: 12.5px; color: var(--muted); white-space: nowrap; padding-right: 8px; min-width: 130px; }
   .duty { display: flex; flex-wrap: wrap; gap: 14px; margin: 14px 0 6px; }
   .duty > div { flex: 1 1 220px; border: 1px solid var(--accent); border-radius: 10px; padding: 12px 16px; background: var(--code-bg); }
   .duty .lbl { font-size: 12px; color: var(--muted); }
@@ -160,9 +162,23 @@
 <script>
 "use strict";
 
+// ------------------------------------------------------------------- CAS numbers
+// The API accepts CAS numbers only. The check below is the same rule as the server's (format and check digit).
+function casProblem(v) {
+  if (!/^\d{2,7}-\d{2}-\d$/.test(v)) {
+    return /[A-Za-z]/.test(v) ? "a name, not a CAS number" : "not in CAS format (three groups of digits such as 7732-18-5)";
+  }
+  const d = v.replace(/-/g, "");
+  let total = 0;
+  for (let i = d.length - 2, w = 1; i >= 0; i--, w++) total += w * Number(d[i]);
+  return total % 10 === Number(d[d.length - 1]) ? null : "invalid CAS check digit (typing error?)";
+}
+// Names shown next to a CAS number as a hint only; they are never sent to the API.
+const CAS_NAMES = { "7732-18-5": "water", "7783-06-4": "hydrogen sulfide", "630-08-0": "carbon monoxide", "124-38-9": "carbon dioxide", "1333-74-0": "hydrogen", "74-82-8": "methane", "74-86-2": "acetylene", "74-85-1": "ethylene (ethene)", "74-84-0": "ethane", "74-99-7": "propyne", "115-07-1": "propylene (propene)", "74-98-6": "propane", "689-97-4": "1-buten-3-yne", "106-99-0": "1,3-butadiene", "115-11-7": "isobutene", "106-98-9": "1-butene", "624-64-6": "trans-2-butene", "106-97-8": "n-butane", "75-28-5": "isobutane", "591-93-5": "1,4-pentadiene", "78-79-5": "isoprene", "542-92-7": "cyclopentadiene", "142-29-0": "cyclopentene", "563-46-2": "2-methyl-1-butene", "109-66-0": "n-pentane", "109-67-1": "1-pentene", "78-78-4": "isopentane", "287-92-3": "cyclopentane", "71-43-2": "benzene", "693-89-0": "1-methylcyclopentene", "513-81-5": "biisopropenyl", "592-41-6": "1-hexene", "96-37-7": "methylcyclopentane", "110-54-3": "n-hexane", "110-82-7": "cyclohexane", "26519-91-5": "methylcyclopentadiene", "762-62-9": "4,4-dimethyl-1-pentene", "592-76-7": "1-heptene", "108-88-3": "toluene", "28823-41-8": "(name not available)", "628-92-2": "cycloheptene", "142-82-5": "n-heptane", "100-42-5": "styrene", "106-42-3": "p-xylene", "100-41-4": "ethylbenzene", "91-20-3": "naphthalene", "124-11-8": "1-nonene", "111-84-2": "n-nonane" };
+
 // ---------------------------------------------------------------- definitions
-const WET = { T: 350, P: 101325, comps: [["water", 0.5], ["hexane", 0.5]] };
-const GAS = { T: 423.15, P: 29411.81, comps: [["methane", 0.5], ["ethane", 0.5]] };
+const WET = { T: 350, P: 101325, comps: [["7732-18-5", 0.5], ["110-54-3", 0.5]] };   // water, hexane
+const GAS = { T: 423.15, P: 29411.81, comps: [["74-82-8", 0.5], ["74-84-0", 0.5]] };   // methane, ethane
 
 const ENDPOINTS = [
   { path: "/cp_calc", group: "Individual properties", title: "Heat capacity",
@@ -184,7 +200,7 @@ const ENDPOINTS = [
 const LEAD_COMPONENTS = ["7732-18-5","7783-06-4","630-08-0","124-38-9","1333-74-0","74-82-8","74-86-2","74-85-1","74-84-0","74-99-7","115-07-1","74-98-6","689-97-4","106-99-0","115-11-7","106-98-9","624-64-6","106-97-8","75-28-5","591-93-5","78-79-5","542-92-7","142-29-0","563-46-2","109-66-0","109-67-1","78-78-4","287-92-3","71-43-2","693-89-0","513-81-5","592-41-6","96-37-7","110-54-3","110-82-7","26519-91-5","762-62-9","592-76-7","108-88-3","28823-41-8","628-92-2","142-82-5","100-42-5","106-42-3","100-41-4","91-20-3","124-11-8","111-84-2"];
 const LEAD_ZS = [0.269748141292868,0,6.03528399403273E-04,1.00736830732534E-04,0.258141212597959,4.00793391652614E-02,1.75879627063473E-03,0.24503640666357,0.171763402033696,1.0092770950848E-04,4.22577374255925E-03,5.02687004252303E-04,1.0010170263719E-04,3.31625297005193E-03,0,3.0130220697407E-04,2.0057870262539E-04,9.0440145713386E-04,0,1.00843087685205E-04,0,5.02652336375593E-04,3.01816734349797E-04,0,0,1.00722963353751E-04,0,0,1.60794644088582E-03,0,0,0,0,0,0,0,0,0,2.00921736353394E-04,0,0,0,1.00569467602784E-04,0,0,0,0,2.00938483526172E-04];
 
-const WH = [["water", 0.5], ["hexane", 0.5]];
+const WH = [["7732-18-5", 0.5], ["110-54-3", 0.5]];   // water, hexane
 const EOS_EP = {
   path: "/eos_stream_calc", title: "EOS stream properties", compare: true, render: showEos,
   desc: "Peng-Robinson equation of state with a real three-phase flash. One call returns the vapor, aqueous and organic phases " +
@@ -194,7 +210,7 @@ const EOS_EP = {
   examples: [
     { label: "Water/hexane 300 K (two liquids)", T: 300, P: 101325, comps: WH },
     { label: "Water/hexane 357 K (all vapor)", T: 357, P: 101325, comps: WH },
-    { label: "Methane/ethane gas", T: 423.15, P: 29411.81, comps: [["methane", 0.5], ["ethane", 0.5]] },
+    { label: "Methane/ethane gas", T: 423.15, P: 29411.81, comps: [["74-82-8", 0.5], ["74-84-0", 0.5]] },
     { label: "48-component sample stream", T: 425, P: 169612.911830353, comps: LEAD_COMPONENTS.map((c, i) => [c, LEAD_ZS[i]]) },
   ],
 };
@@ -203,8 +219,8 @@ const PT_FIELDS = [
   { key: "T", label: "Temperature T (K)" },
   { key: "P", label: "Pressure P (Pa)" },
 ];
-const LEAD_MOLPCT = [0,0,0,0,0,0.02,0.43,60.6,37.94,0.01,0.72,0.14,0,0.05,0,0.05,0,0.04,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
-const C2_STREAM = LEAD_COMPONENTS.map((c, i) => [c, LEAD_MOLPCT[i]]).filter(([, z]) => z > 0);
+const LEAD_FRAC = [0,0,0,0,0,0.0002,0.0043,0.606,0.3794,0.0001,0.0072,0.0014,0,0.0005,0,0.0005,0,0.0004,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];   // mole fractions of the 48 components (they add up to 1)
+const C2_STREAM = LEAD_COMPONENTS.map((c, i) => [c, LEAD_FRAC[i]]).filter(([, z]) => z > 0);
 const C2_COND = { T_in: 300, P_in: 254920, T_out: 368, P_out: 254720 };
 
 const ENTH_EP = {
@@ -217,15 +233,15 @@ const ENTH_EP = {
   ],
   desc: "Enthalpy of one stream at an inlet and an outlet condition, and the heat duty between them (outlet minus inlet), " +
         "from a Peng-Robinson equation of state. A phase change between inlet and outlet (for example vaporisation) is included. " +
-        "Mole fractions or mole percent are both fine; they are rescaled. Components with a mole fraction of 0 are skipped. " +
+        "Components are CAS numbers and the composition is given as mole fractions (not mole percent) that add up to 1. Components with a mole fraction of 0 are skipped. " +
         "The first call for a new set of components builds the model and can take a few seconds.",
   ex: { vals: C2_COND, comps: C2_STREAM },
   examples: [
-    { label: "Pure ethylene, heating", vals: C2_COND, comps: [["ethylene", 1]] },
-    { label: "Water 300 K to 400 K (vaporisation)", vals: { T_in: 300, P_in: 101325, T_out: 400, P_out: 101325 }, comps: [["water", 1]] },
-    { label: "Water/hexane, heating", vals: { T_in: 300, P_in: 101325, T_out: 380, P_out: 101325 }, comps: [["water", 0.5], ["hexane", 0.5]] },
+    { label: "Pure ethylene, heating", vals: C2_COND, comps: [["74-85-1", 1]] },
+    { label: "Water 300 K to 400 K (vaporisation)", vals: { T_in: 300, P_in: 101325, T_out: 400, P_out: 101325 }, comps: [["7732-18-5", 1]] },
+    { label: "Water/hexane, heating", vals: { T_in: 300, P_in: 101325, T_out: 380, P_out: 101325 }, comps: [["7732-18-5", 0.5], ["110-54-3", 0.5]] },
     { label: "Cooling: C2 stream 368 K to 300 K", vals: { T_in: 368, P_in: 254720, T_out: 300, P_out: 254920 }, comps: C2_STREAM },
-    { label: "Full 48-component list (mol %)", vals: C2_COND, comps: LEAD_COMPONENTS.map((c, i) => [c, LEAD_MOLPCT[i]]) },
+    { label: "Full 48-component list (mole fractions)", vals: C2_COND, comps: LEAD_COMPONENTS.map((c, i) => [c, LEAD_FRAC[i]]) },
   ],
 };
 
@@ -280,20 +296,36 @@ function buildSection(ep, index) {
   const tbody = el("tbody");
   const sumLine = el("p", { class: "sum" });
   const addRow = (name = "", z = "") => {
-    const nameIn = el("input", { value: name, placeholder: "e.g. water or 7732-18-5", spellcheck: "false" });
+    const nameIn = el("input", { value: name, placeholder: "CAS number, e.g. 7732-18-5", spellcheck: "false" });
+    const hint = el("td", { class: "nm" }, CAS_NAMES[String(name).trim()] || "");
     const zIn = el("input", { type: "number", step: "any", min: "0", value: z, placeholder: "0.5" });
     const rm = el("button", { type: "button", title: "Remove", onclick: () => { tr.remove(); updateSum(); } }, "✕");
-    const tr = el("tr", {}, el("td", {}, nameIn), el("td", {}, zIn), el("td", { class: "x" }, rm));
+    const tr = el("tr", {}, el("td", {}, nameIn), hint, el("td", {}, zIn), el("td", { class: "x" }, rm));
+    nameIn.addEventListener("input", () => { nameIn.classList.remove("bad"); hint.textContent = CAS_NAMES[nameIn.value.trim()] || ""; });
     zIn.addEventListener("input", updateSum);
     tbody.append(tr);
   };
   const readComps = () => [...tbody.rows].map(r => ({
-    name: r.cells[0].firstChild.value.trim(), z: r.cells[1].firstChild.value }));
+    name: r.cells[0].firstChild.value.trim(), z: r.cells[2].firstChild.value }));
+  // Marks every row whose component is not a valid CAS number and returns one clear message (or null).
+  const validateCas = () => {
+    const problems = [], seen = new Set();
+    [...tbody.rows].forEach(r => {
+      const input = r.cells[0].firstChild, v = input.value.trim();
+      const why = v === "" ? "empty" : casProblem(v) || (seen.has(v) ? "duplicate" : null);
+      seen.add(v);
+      input.classList.toggle("bad", !!why);
+      if (why) problems.push(`'${v}' (${why})`);
+    });
+    return problems.length
+      ? "Components must be CAS numbers such as 7732-18-5 (water); names are not accepted. Not accepted: " + problems.join(", ") + "."
+      : null;
+  };
   function updateSum() {
     const total = readComps().reduce((s, c) => s + (parseFloat(c.z) || 0), 0);
     const off = Math.abs(total - 1) > 1e-9;
     sumLine.textContent = `Sum of mole fractions: ${Number(total.toPrecision(10))}` +
-      (off ? " (the API will rescale them to 1)" : "");
+      (off ? " (they should add up to 1; the API rescales small differences)" : "");
   }
   const loadExample = (e = ep.ex) => {
     tbody.replaceChildren();
@@ -315,7 +347,9 @@ function buildSection(ep, index) {
     if (!names.length) return fail("Paste the components array first.");
     if (bad !== -1) return fail(`Mole fraction #${bad + 1} ("${zsRaw[bad]}") is not a number.`);
     if (names.length !== zsNum.length) return fail(`Counts differ: ${names.length} components but ${zsNum.length} mole fractions.`);
-    const dup = names.find((n, i) => names.findIndex(m => m.toLowerCase() === n.toLowerCase()) !== i);
+    const badCas = names.map(n => [n, casProblem(n)]).filter(([, why]) => why);
+    if (badCas.length) return fail("Components must be CAS numbers (names are not accepted). Not accepted: " + badCas.map(([n, why]) => `'${n}' (${why})`).join(", ") + ".");
+    const dup = names.find((n, i) => names.indexOf(n) !== i);
     if (dup) return fail(`Duplicate component: ${dup}`);
     tbody.replaceChildren();
     names.forEach((n, i) => addRow(n, zsRaw[i]));
@@ -324,15 +358,15 @@ function buildSection(ep, index) {
   };
   const bulk = el("details", { class: "bulk" },
     el("summary", {}, "Paste arrays (components + mole fractions)"),
-    el("div", { class: "hint" }, "Paste a Python or JSON list, e.g. components = [\"water\", \"74-82-8\"] and zs = [0.5, 0.5]. The name and brackets are optional; both lists must have the same length."),
-    el("label", {}, "components"), compsTa,
-    el("label", { style: "margin-top:8px" }, "zs (mole fractions)"), zsTa,
+    el("div", { class: "hint" }, "Paste a Python or JSON list, e.g. components = [\"7732-18-5\", \"74-82-8\"] and zs = [0.5, 0.5]. Components are CAS numbers only; zs are mole fractions (not percent). The name and brackets are optional; both lists must have the same length."),
+    el("label", {}, "components (CAS numbers)"), compsTa,
+    el("label", { style: "margin-top:8px" }, "zs (mole fractions, not percent)"), zsTa,
     el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: applyBulk }, "Apply to table"), bulkMsg));
   sec.append(bulk);
 
   sec.append(
     el("div", { class: "tablewrap" }, el("table", { class: "comps" },
-      el("thead", {}, el("tr", {}, el("th", {}, "Component (name or CAS)"), el("th", {}, "Mole fraction (or mol %)"), el("th"))),
+      el("thead", {}, el("tr", {}, el("th", {}, "CAS number"), el("th", {}, "Name (hint only)"), el("th", {}, "Mole fraction"), el("th"))),
       tbody)),
     sumLine);
 
@@ -349,7 +383,7 @@ function buildSection(ep, index) {
     const comps = readComps();
     const body = { components: comps.map(c => c.name), zs: comps.map(c => parseFloat(c.z)) };
     fields.forEach(f => { body[f.key] = parseFloat(inputs[f.key].value); });
-    const problem = clientCheck(body, ep);
+    const problem = validateCas() || clientCheck(body, ep);
     if (problem) return showError(result, { code: "client_check", message: problem }, body, null);
 
     runBtn.disabled = true; runBtn.textContent = "Calculating…";
@@ -386,7 +420,7 @@ function clientCheck(b, ep) {
     if (!(b[f.key] > 0)) return `${f.label} must be a number greater than 0.`;
   }
   if (!b.components.length) return "Add at least one component.";
-  if (b.components.some(n => !n)) return "Every component needs a name.";
+  if (b.components.some(n => !n)) return "Every component needs a CAS number.";
   if (b.zs.some(z => Number.isNaN(z))) return "Every component needs a mole fraction.";
   return null;
 }
@@ -507,9 +541,9 @@ const VENT_EXAMPLES = [
 function buildVentSection() {
   const sec = el("section", { id: "sec102" });
   sec.append(el("h2", {}, "Flow versus opening: polynomial fit"), el("div", { class: "path" }, "POST /vent_flow_calc"),
-    el("p", { class: "desc" }, "Enter measured points (valve opening in % and the flow at that opening, in any one consistent unit). " +
+    el("p", { class: "desc" }, "Enter measured points (valve opening in % and the flow at that opening, in the unit of your data, for example kg/h). " +
       "The API fits a polynomial (equivalent to Excel LINEST with Flow as y and Opening as x) and estimates the flow at the openings you list. " +
-      "The degree is reduced automatically if there are too few points. An opening outside the fitted range is flagged as extrapolated and, by default, evaluated at the nearest end of the range."));
+      "The flow estimates and all fit values come back in the unit you entered; nothing is converted. The degree is reduced automatically if there are too few points. An opening outside the fitted range is flagged as extrapolated and, by default, evaluated at the nearest end of the range."));
 
   const degreeIn = el("input", { type: "number", step: "1", min: "1", max: "10", value: "2" });
   const minFlowIn = el("input", { type: "number", step: "any", value: "0" });
@@ -522,7 +556,7 @@ function buildVentSection() {
   const tbody = el("tbody");
   const addRow = (o = "", f = "") => {
     const oIn = el("input", { type: "number", step: "any", value: o, placeholder: "opening %" });
-    const fIn = el("input", { type: "number", step: "any", value: f, placeholder: "flow" });
+    const fIn = el("input", { type: "number", step: "any", value: f, placeholder: "flow, in your unit" });
     const rm = el("button", { type: "button", title: "Remove", onclick: () => tr.remove() }, "✕");
     const tr = el("tr", {}, el("td", {}, oIn), el("td", {}, fIn), el("td", { class: "x" }, rm));
     tbody.append(tr);
@@ -545,13 +579,13 @@ function buildVentSection() {
   };
   sec.append(el("details", { class: "bulk" },
     el("summary", {}, "Paste arrays (openings + flows)"),
-    el("div", { class: "hint" }, "Paste a Python or JSON list, for example opening_values = [19.7, 49.6, 89.7] and flow_values = [48601, 122050, 220698]. Both lists must have the same length."),
+    el("div", { class: "hint" }, "Paste a Python or JSON list, for example opening_values = [19.7, 49.6, 89.7] and flow_values = [48601, 122050, 220698] (flow in the unit of your data). Both lists must have the same length."),
     el("label", {}, "opening_values (%)"), openTa,
     el("label", { style: "margin-top:8px" }, "flow_values"), flowTa,
     el("div", { class: "actions" }, el("button", { type: "button", class: "primary", onclick: applyBulk }, "Apply to table"), msg)));
 
   sec.append(el("div", { class: "tablewrap" }, el("table", { class: "comps" },
-    el("thead", {}, el("tr", {}, el("th", {}, "Opening (%)"), el("th", {}, "Flow"), el("th"))), tbody)));
+    el("thead", {}, el("tr", {}, el("th", {}, "Opening (%)"), el("th", {}, "Flow (your unit)"), el("th"))), tbody)));
   sec.append(el("div", { class: "row" }, el("div", { style: "flex-basis:100%" },
     el("label", {}, "Estimate the flow at these openings (%), separated by commas"), estIn)));
   sec.append(el("label", { class: "check" }, clipBox, "Evaluate openings outside the fitted range at the nearest end of the range (they are still flagged as extrapolated)"));

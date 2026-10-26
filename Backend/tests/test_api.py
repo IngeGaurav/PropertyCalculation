@@ -6,9 +6,9 @@ from main import app
 
 client = TestClient(app, raise_server_exceptions=False)
 
-GOOD = {"T": 423.15, "P": 29411.81, "components": ["methane", "ethane"], "zs": [0.5, 0.5]}
-WET = {"T": 350, "P": 101325, "components": ["7732-18-5", "hexane"], "zs": [0.5, 0.5]}
-STEAM = {"T": 500, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5]}
+GOOD = {"T": 423.15, "P": 29411.81, "components": ["74-82-8", "74-84-0"], "zs": [0.5, 0.5]}
+WET = {"T": 350, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5]}
+STEAM = {"T": 500, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5]}
 ALL = ["cp_calc", "density_calc", "mw_calc", "vf_calc"]
 
 
@@ -61,10 +61,6 @@ def test_triphase_vapor_state_no_crash():
         assert r.status_code == 200, (ep, r.json())
 
 
-def test_triphase_accepts_water_by_name_or_cas():
-    a = client.post("/triphase_vf_calc", json=WET).json()["data"]
-    b = client.post("/triphase_vf_calc", json={**WET, "components": ["water", "hexane"]}).json()["data"]
-    assert a == b
 
 
 def test_triphase_requires_water():
@@ -79,7 +75,7 @@ def test_triphase_requires_water():
     ({"T": -5}, "T"),
     ({"P": 0}, "P"),
     ({"components": []}, "components"),
-    ({"components": ["methane", "METHANE"]}, "components"),
+    ({"components": ["74-82-8", "74-82-8"]}, "components"),
     ({"T": "hot"}, "T"),
 ])
 def test_validation_errors(patch, field):
@@ -90,10 +86,10 @@ def test_validation_errors(patch, field):
 
 
 def test_unknown_component():
-    r = client.post("/cp_calc", json={**GOOD, "components": ["methane", "notachemical"]})
+    r = client.post("/cp_calc", json={**GOOD, "components": ["74-82-8", "9999-99-9"]})
     body = r.json()
     assert r.status_code == 422 and body["error"]["code"] == "unknown_component"
-    assert body["error"]["details"] == {"component": "notachemical"}
+    assert body["error"]["details"] == {"component": "9999-99-9"}
 
 
 def test_404_and_405_use_error_envelope():
@@ -135,7 +131,7 @@ def test_unexpected_error_is_masked(monkeypatch):
 
 
 def test_many_components_accepted():
-    comps = ["methane", "ethane", "propane", "n-butane", "n-pentane", "n-hexane", "water", "benzene",
-             "toluene", "ethylene", "propylene", "hydrogen", "carbon dioxide"] * 1
+    comps = ["74-82-8", "74-84-0", "74-98-6", "106-97-8", "109-66-0", "110-54-3", "7732-18-5", "71-43-2",
+             "108-88-3", "74-85-1", "115-07-1", "1333-74-0", "124-38-9"] * 1
     r = client.post("/vf_calc", json={"T": 400, "P": 200000, "components": comps, "zs": [1] * len(comps)})
     assert r.status_code == 200, r.json()

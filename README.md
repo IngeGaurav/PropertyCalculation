@@ -1,12 +1,12 @@
 # Thermo Property API
 
-A web service that calculates thermodynamic properties of multi-component mixtures — heat capacity, density, molecular weight and phase fractions — using the Python [`thermo`](https://github.com/CalebBell/thermo) library. It offers four groups — individual **Property APIs**, a complete-stream **EOS Stream API**, an **Enthalpy API** for enthalpy and heat duty and a **Vent API** (flow versus valve opening) — and includes a browser-based tester with a tab for each.
+A web service that calculates thermodynamic properties of multi-component mixtures — heat capacity, density, molecular weight and phase fractions — (components are given as CAS numbers and compositions as mole fractions) using the Python [`thermo`](https://github.com/CalebBell/thermo) library. It offers four groups — individual **Property APIs**, a complete-stream **EOS Stream API**, an **Enthalpy API** for enthalpy and heat duty and a **Vent API** (flow versus valve opening) — and includes a browser-based tester with a tab for each.
 
 | | |
 |---|---|
 | **Production address** | `http://192.168.11.216:4300/` (web tester) · `http://192.168.11.216:4300/api` (API) |
 | **Interactive API docs** | `http://192.168.11.216:4300/api/docs` |
-| **Version** | 2.3.0 |
+| **Version** | 3.0.0 |
 
 ## Documentation
 

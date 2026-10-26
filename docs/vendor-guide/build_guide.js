@@ -1,5 +1,5 @@
+// Builds the vendor integration guide (Word). Usage: node build_guide.js out.docx examples.json
 const fs = require("fs");
-const path = require("path");
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, ShadingType, BorderStyle,
   AlignmentType, HeadingLevel, Footer, PageNumber, LevelFormat,
@@ -11,9 +11,8 @@ const VERSION = DATA._version;
 const BASE = "http://192.168.11.216:4300/api";
 
 // ----------------------------------------------------------------------------- look
-const NAVY = "1F3A5F", BLUE = "2B6CB0", GREY = "6B7280", LINE = "D1D5DB", CODEBG = "F3F4F6", HEADBG = "1F3A5F", ALT = "F8FAFC";
+const NAVY = "1F3A5F", BLUE = "2B6CB0", GREY = "6B7280", LINE = "D1D5DB", CODEBG = "F3F4F6", HEADBG = "1F3A5F", ALT = "F8FAFC", WARN = "FFF7E6";
 const PAGE_W = 11906, PAGE_H = 16838, MARGIN = 1134;            // A4, 2 cm margins
-const W = PAGE_W - 2 * MARGIN;                                    // 9638 content width (DXA)
 const FONT = "Calibri", MONO = "Consolas";
 
 // ----------------------------------------------------------------------------- helpers
@@ -27,10 +26,10 @@ function runs(text, base = {}) {
   }
   return out;
 }
-const P = (text, o = {}) => new Paragraph({ children: runs(text, o.run || {}), spacing: { after: o.after ?? 120, before: o.before ?? 0 }, alignment: o.align, keepNext: o.keepNext, indent: o.indent });
+const P = (text, o = {}) => new Paragraph({ children: runs(text, o.run || {}), spacing: { after: o.after ?? 120, before: o.before ?? 0 }, alignment: o.align, keepNext: o.keepNext });
 const H1 = (text, group) => [
   ...(group ? [new Paragraph({ pageBreakBefore: true, spacing: { after: 40 }, children: [new TextRun({ text: group.toUpperCase(), font: FONT, size: 17, bold: true, color: GREY, characterSpacing: 40 })] })] : []),
-  new Paragraph({ heading: HeadingLevel.HEADING_1, pageBreakBefore: !group, spacing: { before: group ? 0 : 0, after: 120 }, keepNext: true,
+  new Paragraph({ heading: HeadingLevel.HEADING_1, pageBreakBefore: !group, spacing: { before: 0, after: 120 }, keepNext: true,
     border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: BLUE, space: 4 } }, children: [new TextRun({ text, font: FONT, size: 34, bold: true, color: NAVY })] }),
 ];
 const H2 = (text) => new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 150, after: 60 }, keepNext: true, children: [new TextRun({ text, font: FONT, size: 24, bold: true, color: BLUE })] });
@@ -48,11 +47,11 @@ function code(text) {
 
 const border = { style: BorderStyle.SINGLE, size: 4, color: LINE };
 const borders = { top: border, bottom: border, left: border, right: border };
-function table(headers, rows, widths) {
+function table(headers, rows, widths, opts = {}) {
   const total = widths.reduce((a, b) => a + b, 0);
   const cell = (t, w, head, i) => new TableCell({
     width: { size: w, type: WidthType.DXA }, borders,
-    shading: head ? { type: ShadingType.CLEAR, fill: HEADBG, color: "auto" } : (i % 2 ? { type: ShadingType.CLEAR, fill: ALT, color: "auto" } : undefined),
+    shading: head ? { type: ShadingType.CLEAR, fill: HEADBG, color: "auto" } : (opts.fill ? { type: ShadingType.CLEAR, fill: opts.fill, color: "auto" } : (i % 2 ? { type: ShadingType.CLEAR, fill: ALT, color: "auto" } : undefined)),
     margins: { top: 35, bottom: 35, left: 90, right: 90 },
     children: [new Paragraph({ spacing: { after: 0 }, children: runs(t, head ? { bold: true, color: "FFFFFF", size: 19 } : { size: 19 }) })],
   });
@@ -65,156 +64,128 @@ function table(headers, rows, widths) {
   });
 }
 const gap = (after = 60) => new Paragraph({ spacing: { after }, children: [] });
+const caption = (t) => P(t, { run: { size: 18, color: GREY }, after: 60 });
+const endpointLine = (method, path) => [
+  new Paragraph({ spacing: { after: 60 }, children: [new TextRun({ text: method, font: MONO, size: 22, bold: true, color: "FFFFFF", shading: { type: ShadingType.CLEAR, fill: BLUE, color: "auto" } }), new TextRun({ text: "  " + path, font: MONO, size: 22, bold: true, color: NAVY })] }),
+  P(`${BASE}${path}`, { run: { size: 19, color: GREY }, after: 100 }),
+];
 
-// ----------------------------------------------------------------------------- common text
+// ----------------------------------------------------------------------------- shared texts
 const ERR = {
-  validation_error: ["422", "A field is missing, has the wrong type, or breaks a rule (for example T or P not above 0, lists of different length, a negative or duplicate entry). `error.details` lists each field."],
-  unknown_component: ["422", "A name or CAS number is not recognised. `error.details.component` names it. Use the CAS number instead."],
-  flash_failed: ["422", "The equilibrium calculation did not work for this state. Check the conditions and composition."],
-  property_unavailable: ["422", "Data needed for a component is missing. `error.details.components` lists them."],
-  water_required: ["422", "The mixture does not contain water. Add `\"water\"` or `\"7732-18-5\"`, or use the EOS Stream API."],
+  validation_error: ["422", "A field is missing, has the wrong type or breaks a rule: a component that is not a CAS number (names are not accepted), T or P not above 0, lists of different length, a negative or repeated entry. `error.details` lists each field."],
+  unknown_component: ["422", "A CAS number is correctly written but is not in the component database. `error.details.component` names it."],
+  property_unavailable: ["422", "Data the model needs for a component is missing. `error.details.components` lists them."],
+  flash_failed: ["422", "The equilibrium calculation did not work for this state. Check the conditions and the composition."],
   fit_failed: ["422", "The data cannot be fitted: fewer different opening values than the degree needs. `error.details` gives the numbers."],
   calculation_timeout: ["504", "The calculation took longer than 30 seconds."],
 };
-const errRows = (codes, special = {}) => codes.map((c) => [`\`${c}\``, ERR[c][0], special[c] || ERR[c][1]]);
-const errTable = (codes, special) => table(["Error code", "HTTP", "When it occurs here"], errRows(codes, special), [2300, 700, 6638]);
+const errTable = (codes, special = {}) => table(["Error code", "HTTP", "When it occurs here"],
+  codes.map((c) => [`\`${c}\``, ERR[c][0], special[c] || ERR[c][1]]), [2300, 700, 6638]);
 
-const COMPOSITION_REQ = "The request is the common one described in section 2: `T` (K), `P` (Pa), `components` and `zs`.";
-const WH_NOTE = "Example mixture: water 50 mol % and hexane 50 mol % at 300 K and 101325 Pa.";
-const WH_CAPTION = WH_NOTE + " At this state the model finds a single liquid, so vapor values are null.";
-const WH_CAPTION_EOS = WH_NOTE + " At this state the mixture is two liquid phases.";
-const API_SPECIFIC_ERRORS = ["water_required", "fit_failed"];
+const COMP_ROWS = [
+  ["`components`", "array of text", "**CAS numbers only**, for example `\"7732-18-5\"` (water). Names such as `\"water\"` are rejected with an error. At least one, no repeats."],
+  ["`zs`", "array of numbers", "**Mole fractions, not mole percent**: 0.25 means 25 %. Same order and length as `components`, none negative, adding up to 1. A small difference from 1 is rescaled (`meta.zs_normalized` is then true). A component with 0 is allowed and is left out of the calculation."],
+];
+const TP_ROWS = [
+  ["`T`", "number", "Temperature in kelvin (K), above 0."],
+  ["`P`", "number", "Pressure in pascal (Pa), above 0. 1 atm = 101325 Pa."],
+];
+const reqTable = (rows) => table(["Field", "Type", "Rule"], rows, [1900, 1700, 6038]);
+const respTable = (rows) => table(["Field", "Type", "Unit", "Meaning"], rows, [2400, 1400, 1300, 4538]);
 
-// ----------------------------------------------------------------------------- the API pages
+// ----------------------------------------------------------------------------- the three APIs
 const apis = [
   {
-    n: 4, group: "Property APIs", title: "Heat capacity", method: "POST", path: "/cp_calc",
-    purpose: "Heat capacity of the liquid phase, the vapor phase and the whole mixture, together with the phase fractions, from a vapor–liquid flash at the given T and P.",
-    req: COMPOSITION_REQ,
-    fields: [["`Cp_liquid`", "number or null", "J/mol/K", "Liquid-phase heat capacity. null if there is no liquid."],
-      ["`Cp_vapor`", "number or null", "J/mol/K", "Vapor-phase heat capacity (ideal-gas). null if there is no vapor."],
-      ["`Cp_mix`", "number", "J/mol/K", "Fraction-weighted mixture heat capacity."],
-      ["`Vapor_fraction`", "number", "mole fraction", "Vapor fraction (0 to 1)."],
-      ["`Liquid_fraction`", "number", "mole fraction", "Liquid fraction (1 − vapor fraction)."]],
-    notes: [WH_NOTE + " This state is a single liquid, so the vapor values are null.", "A phase that does not exist is null, never 0."],
-    errors: ["validation_error", "unknown_component", "flash_failed", "property_unavailable", "calculation_timeout"],
-  },
-  {
-    n: 5, group: "Property APIs", title: "Density", method: "POST", path: "/density_calc",
-    purpose: "Density of the mixture at the given T and P.",
-    req: COMPOSITION_REQ,
-    fields: [["`rho_mix`", "number", "kg/m³", "Mixture density."],
-      ["`phase`", "string or null", "–", "Phase state: `g` gas, `l` liquid, `l/g` two-phase."]],
-    notes: [WH_NOTE, "For methane/ethane 50/50 at 423.15 K and 29411.81 Pa the result is 0.1927403 kg/m³ with phase `g`."],
-    errors: ["validation_error", "unknown_component", "property_unavailable", "calculation_timeout"],
-  },
-  {
-    n: 6, group: "Property APIs", title: "Molecular weight", method: "POST", path: "/mw_calc",
-    purpose: "Molecular weight of the liquid phase, the vapor phase and the whole mixture.",
-    req: COMPOSITION_REQ,
-    fields: [["`MW_liquid`", "number or null", "g/mol", "Liquid phase. null if there is no liquid."],
-      ["`MW_vapor`", "number or null", "g/mol", "Vapor phase. null if there is no vapor."],
-      ["`MW_avg`", "number", "g/mol", "Overall mixture."]],
-    notes: [WH_NOTE],
-    errors: ["validation_error", "unknown_component", "flash_failed", "property_unavailable", "calculation_timeout"],
-  },
-  {
-    n: 7, group: "Property APIs", title: "Vapor fraction", method: "POST", path: "/vf_calc",
-    purpose: "How much of the mixture is vapor and how much is liquid at the given T and P.",
-    req: COMPOSITION_REQ,
-    fields: [["`Vapor_fraction`", "number", "mole fraction", "0 = all liquid, 1 = all vapor."],
-      ["`Liquid_fraction`", "number", "mole fraction", "1 − vapor fraction."]],
-    notes: [WH_NOTE, "Mole fractions that do not add up to 1 are rescaled; `meta.zs_normalized` is then true."],
-    errors: ["validation_error", "unknown_component", "flash_failed", "calculation_timeout"],
-  },
-  {
-    n: 8, group: "Property APIs", title: "Heat capacity: vapor, aqueous, organic", method: "POST", path: "/triphase_cp_calc",
-    purpose: "Heat capacity of the vapor, aqueous (water) and organic phases of a mixture that contains water.",
-    req: COMPOSITION_REQ + " **The mixture must contain water.**",
-    fields: [["`Cp_aqueous`", "number or null", "J/mol/K", "null if there is no liquid water."],
-      ["`Cp_organic`", "number or null", "J/mol/K", "null if there is no organic liquid."],
-      ["`Cp_vapor`", "number or null", "J/mol/K", "null if there is no vapor."],
-      ["`Cp_mix`", "number", "J/mol/K", "Weighted mixture heat capacity."]],
-    notes: ["The liquid is split by approximation: **aqueous** = water, **organic** = all other components. This suits water and hydrocarbons that do not mix; for a rigorous split use the EOS Stream API.", WH_NOTE],
-    errors: ["validation_error", "unknown_component", "water_required", "flash_failed", "calculation_timeout"],
-    errExample: '{\n  "status": "error",\n  "error": {\n    "code": "water_required",\n    "message": "Triphase endpoints require water in the mixture (use \'water\' or \'7732-18-5\').",\n    "details": null\n  },\n  "request_id": "a1b2c3d4e5f6"\n}',
-  },
-  {
-    n: 9, group: "Property APIs", title: "Molecular weight: vapor, aqueous, organic", method: "POST", path: "/triphase_mw_calc",
-    purpose: "Molecular weight of the vapor, aqueous and organic phases of a mixture that contains water.",
-    req: COMPOSITION_REQ + " **The mixture must contain water.**",
-    fields: [["`MW_aqueous`", "number or null", "g/mol", "Water. null if there is no liquid water."],
-      ["`MW_organic`", "number or null", "g/mol", "null if there is no organic liquid."],
-      ["`MW_vapor`", "number or null", "g/mol", "null if there is no vapor."],
-      ["`MW_mix`", "number", "g/mol", "Overall mixture."]],
-    notes: ["Same aqueous / organic split as section 8.", WH_NOTE],
-    errors: ["validation_error", "unknown_component", "water_required", "flash_failed", "calculation_timeout"],
-  },
-  {
-    n: 10, group: "Property APIs", title: "Phase fractions: vapor, aqueous, organic", method: "POST", path: "/triphase_vf_calc",
-    purpose: "How the total mixture divides into vapor, aqueous and organic phases.",
-    req: COMPOSITION_REQ + " **The mixture must contain water.**",
-    fields: [["`vapor_fraction`", "number", "mole fraction", "Share of the total mixture that is vapor."],
-      ["`aqueous_fraction`", "number", "mole fraction", "Share of the total mixture that is aqueous liquid."],
-      ["`organic_fraction`", "number", "mole fraction", "Share of the total mixture that is organic liquid."],
-      ["`liquid_fraction`", "number", "mole fraction", "Aqueous plus organic."],
-      ["`water_in_liquid`", "number", "mole fraction", "Water share within the liquid."],
-      ["`organic_in_liquid`", "number", "mole fraction", "Non-water share within the liquid."]],
-    notes: ["vapor + aqueous + organic fractions add up to 1.", "Same aqueous / organic split as section 8.", WH_NOTE],
-    errors: ["validation_error", "unknown_component", "water_required", "flash_failed", "calculation_timeout"],
-  },
-  {
-    n: 11, group: "EOS Stream API", title: "Stream properties", method: "POST", path: "/eos_stream_calc",
-    purpose: "The complete result for a stream in one call, from a Peng-Robinson equation of state with a three-phase flash: the phase situation, and for every phase that exists its fraction, molecular weight, heat capacity and density, plus the mixture values. Water is optional.",
-    req: COMPOSITION_REQ + " Components with a mole fraction of 0 are skipped.",
-    fields: [["`case`", "string", "–", "`vapor-only`, `liquid-only (single liquid phase)`, `two-phase vapor-liquid (VL)`, `two-phase liquid-liquid (LL, aqueous+organic)` or `three-phase vapor-liquid-liquid (VLLE)`."],
-      ["`V`, `L`", "number", "mole fraction", "Vapor fraction and total liquid fraction."],
+    n: 6, group: "EOS Stream API", title: "Stream properties", method: "POST", path: "/eos_stream_calc",
+    purpose: "Tells you which phases a stream has at a given temperature and pressure, and for every phase that exists its amount, molecular weight, heat capacity and density, plus the values of the whole mixture. A Peng-Robinson equation of state with a three-phase calculation (vapor, aqueous liquid, organic liquid) is used, so water and hydrocarbons are handled correctly. Water is optional.",
+    request: [...TP_ROWS, ...COMP_ROWS],
+    requestCaption: "Example: water (7732-18-5) and hexane (110-54-3), 0.5 mole fraction each, at 300 K and 101325 Pa.",
+    response: [
+      ["`case`", "text", "–", "Which phases were found: `vapor-only`, `liquid-only (single liquid phase)`, `two-phase vapor-liquid (VL)`, `two-phase liquid-liquid (LL, aqueous+organic)` or `three-phase vapor-liquid-liquid (VLLE)`."],
+      ["`V`, `L`", "number", "mole fraction", "Vapor fraction, and total liquid fraction (aqueous plus organic). V + L = 1."],
       ["`n_phases`", "integer", "count", "Number of phases found."],
       ["`n_components_used`", "integer", "count", "Components that took part (mole fraction above 0)."],
-      ["`vapor`, `aqueous`, `organic`", "object or null", "–", "One object per phase, null if the phase does not exist: `beta` (phase fraction of the total, mole fraction), `MW` (g/mol), `Cp` (J/mol/K), `rho_mass` (kg/m³), `rho_molar_kmol_m3` (kmol/m³)."],
-      ["`mixture`", "object", "–", "`MW` (g/mol), `Cp` (J/mol/K), `Cp_mass_kJ_kgK` (kJ/kg/K), `rho_mass` (kg/m³), `rho_molar_kmol_m3` (kmol/m³)."]],
-    notes: ["The phase with the most water is reported as **aqueous**, the other liquid as **organic**.", "The first request for a new set of components builds the model and can take a few seconds (about 3 s for 25 components); later requests for the same set take milliseconds.", WH_NOTE + " At this state the mixture is two liquids."],
+      ["`vapor`, `aqueous`, `organic`", "object or null", "–", "One object per phase, or null if that phase does not exist. It holds `beta` (share of the total moles in this phase), `MW` (g/mol), `Cp` (J/mol/K), `rho_mass` (kg/m³) and `rho_molar_kmol_m3` (kmol/m³)."],
+      ["`mixture`", "object", "–", "Values of the whole stream: `MW` (g/mol), `Cp` (J/mol/K), `Cp_mass_kJ_kgK` (kJ/kg/K), `rho_mass` (kg/m³), `rho_molar_kmol_m3` (kmol/m³)."],
+    ],
+    reading: [
+      "`case` shows two liquid phases and no vapor, so `V` is 0 and `vapor` is `null`.",
+      "The water-rich liquid is `aqueous` (`MW` 18.015) and the hexane-rich liquid is `organic`. Their `beta` values (0.4904 and 0.5096) add up to 1.",
+    ],
     errors: ["validation_error", "unknown_component", "property_unavailable", "flash_failed", "calculation_timeout"],
+    notes: [
+      "The liquid with the most water is reported as **aqueous**; the other liquid is **organic**. With a single liquid, it is aqueous if it is more than half water.",
+      "The first request for a new set of components builds the model and can take a few seconds (about 3 s for 25 components). Later requests for the same components take milliseconds.",
+    ],
   },
   {
-    n: 12, group: "Enthalpy API", title: "Enthalpy and heat duty", method: "POST", path: "/eos_enthalpy_calc",
-    purpose: "Enthalpy of one stream at an inlet and at an outlet condition, and the heat duty between them (outlet minus inlet), from a Peng-Robinson equation of state. A phase change between inlet and outlet, such as vaporisation, is included.",
-    reqTable: [["`T_in`, `P_in`", "number", "Inlet temperature (K) and pressure (Pa), both above 0."],
-      ["`T_out`, `P_out`", "number", "Outlet temperature (K) and pressure (Pa), both above 0."],
-      ["`components`", "array of text", "Names or CAS numbers, no duplicates."],
-      ["`zs`", "array of numbers", "Mole fractions or mole percent, same length and order. Rescaled to add up to 1."]],
-    fields: [["`inlet`, `outlet`", "object", "–", "State at that condition: `vapor_fraction` (mole fraction), `molecular_weight` (g/mol), `enthalpy_molar` (kJ/mol), `enthalpy_mass` (kJ/kg)."],
-      ["`duty.heat_duty_molar`", "number", "kJ/mol", "Outlet minus inlet enthalpy. Positive = heat absorbed, negative = heat released."],
-      ["`duty.sp_duty`", "number", "kJ/kg", "Specific heat duty (per kilogram)."],
-      ["`n_components_used`", "integer", "count", "Components that took part in the calculation."],
-      ["`ethylene_ethane_kij_override`", "boolean", "–", "true when ethylene and ethane are both present and the calibrated interaction parameter 0.015 was used for that pair."]],
-    notes: ["The example is a C2 stream (given in mole percent, so `meta.zs_normalized` is true) heated from 300 K to 368 K. Heating water from 300 K to 400 K at 101325 Pa gives a duty of 2717.545 kJ/kg, including the latent heat.",
-      "Swapping inlet and outlet gives the same duty with the opposite sign.", "Components with a negligible mole fraction are skipped, so a long list with many zeros is fast. The first request for a new set of components builds the model (about 3 s)."],
+    n: 7, group: "Enthalpy API", title: "Enthalpy and heat duty", method: "POST", path: "/eos_enthalpy_calc",
+    purpose: "Gives the enthalpy of one stream at an inlet condition and at an outlet condition, and the heat duty between them: the heat that has to be added (or removed) to take the stream from the inlet to the outlet. The composition is the same at both conditions. A change of phase between inlet and outlet, such as vaporisation, is included. The calculation uses the same Peng-Robinson model as section 6.",
+    request: [
+      ["`T_in`, `P_in`", "number", "Inlet temperature in K and pressure in Pa, both above 0."],
+      ["`T_out`, `P_out`", "number", "Outlet temperature in K and pressure in Pa, both above 0."],
+      ...COMP_ROWS],
+    requestCaption: "Example: a C2 stream of 10 components (CAS numbers, mole fractions adding up to 1) heated from 300 K to 368 K.",
+    response: [
+      ["`inlet`, `outlet`", "object", "–", "The stream at that condition: `vapor_fraction` (mole fraction), `molecular_weight` (g/mol), `enthalpy_molar` (kJ/mol), `enthalpy_mass` (kJ/kg)."],
+      ["`duty.heat_duty_molar`", "number", "kJ/mol", "Outlet enthalpy minus inlet enthalpy, per mole of stream. Positive: heat is absorbed. Negative: heat is released."],
+      ["`duty.sp_duty`", "number", "kJ/kg", "The same duty per kilogram of stream (specific duty)."],
+      ["`n_components_used`", "integer", "count", "Components that took part (mole fraction above 0)."],
+      ["`ethylene_ethane_kij_override`", "boolean", "–", "true when ethylene and ethane are both in the stream and the calibrated interaction parameter 0.015 was used for that pair."],
+    ],
+    reading: [
+      "The stream stays a vapor (`vapor_fraction` 1) from 300 K to 368 K, so the duty is the heat needed to warm it.",
+      "`heat_duty_molar` 3.481552 kJ/mol is the same energy as `sp_duty` 120.1752 kJ/kg: 28.97064 g/mol times 120.1752 kJ/kg gives 3.481552 kJ/mol.",
+      "`ethylene_ethane_kij_override` is true because both ethylene (74-85-1) and ethane (74-84-0) are present.",
+    ],
     errors: ["validation_error", "unknown_component", "property_unavailable", "flash_failed", "calculation_timeout"],
     errSpecial: { flash_failed: "The equilibrium calculation did not work at the inlet or at the outlet condition; the message says which." },
+    notes: [
+      "Heating water (7732-18-5) from 300 K to 400 K at 101325 Pa gives `sp_duty` 2717.545 kJ/kg, because the liquid becomes vapor and the latent heat is included.",
+      "Swapping inlet and outlet gives the same duty with the opposite sign (cooling releases heat).",
+      "Enthalpy values refer to the model's own reference state, so use differences such as the duty, not the absolute numbers.",
+      "The first request for a new set of components builds the model (about 3 s); later requests take milliseconds.",
+    ],
   },
   {
-    n: 13, group: "Vent API", title: "Flow versus valve opening", method: "POST", path: "/vent_flow_calc",
-    purpose: "Fits a polynomial to your measured flow versus valve opening (equivalent to Excel LINEST with Flow as y and Opening as x) and estimates the flow at further openings. No components, temperature or pressure are involved.",
-    reqTable: [["`opening_values`", "array of numbers", "Valve opening of each data point, in %. At least 3 points."],
-      ["`flow_values`", "array of numbers", "Flow at each opening, in any one unit. Same length as `opening_values`."],
-      ["`degree`", "integer", "Requested polynomial degree, 1 to 10. Reduced automatically to what the points support (points − 2)."],
+    n: 8, group: "Vent API", title: "Flow versus valve opening", method: "POST", path: "/vent_flow_calc",
+    purpose: "Takes your measured points of flow versus valve opening, fits a polynomial through them, and estimates the flow at the openings you ask for. The fit is the same as Excel's LINEST function with Flow as y and Opening as x, and the response gives the equation and the usual fit statistics. No components, temperature or pressure are involved.",
+    request: [
+      ["`opening_values`", "array of numbers", "Valve opening of each data point, in %. At least 3 points."],
+      ["`flow_values`", "array of numbers", "Flow measured at each opening, in the unit of your data (for example kg/h). Same length as `opening_values`."],
+      ["`degree`", "integer", "Polynomial degree you ask for, 1 to 10 (1 = straight line, 2 = parabola). If there are too few points it is reduced automatically to the points minus 2."],
       ["`estimate_at`", "array of numbers", "Openings (%) at which to estimate the flow. May be empty."],
-      ["`clip_to_fit_range`", "boolean", "Default true: an opening outside the fitted range is evaluated at the nearest end of the range (still flagged as extrapolated)."],
-      ["`min_flow`", "number", "Default 0. Floor applied to every estimated flow."]],
-    fields: [["`fit.equation`", "string", "–", "The fitted equation as text."],
-      ["`fit.terms`", "array", "–", "One entry per power, highest power first: `power`, `coefficient`, `standard_error`."],
-      ["`fit.r_squared`, `fit.standard_error_y`, `fit.f_statistic`", "number or null", "–", "Fit statistics. null when undefined (all flows equal, or an exact fit)."],
-      ["`fit.degree_requested`, `degree_used`, `degree_capped`", "integer, integer, boolean", "–", "The degree you asked for, the degree fitted, and whether it was reduced."],
-      ["`fit.n_points`, `df_residual`, `ss_regression`, `ss_residual`", "number", "–", "Number of points, residual degrees of freedom, sums of squares."],
-      ["`fit.opening_range`", "object", "%", "`min` and `max` opening the curve was fitted on."],
-      ["`estimates[]`", "array", "–", "Per requested opening: `opening`, `opening_used`, `flow`, `extrapolated` (outside the fitted range), `floor_applied`."],
-      ["`warnings[]`", "array of text", "–", "Plain-language notes, for example that the degree was reduced."]],
-    notes: ["Flow, `standard_error_y` and the coefficients are in the unit of the flow values you send; nothing is converted. `meta` has only `request_id` and `elapsed_ms`.",
-      "Use the lowest degree that describes the data. A high degree on few points follows the noise."],
+      ["`clip_to_fit_range`", "true or false", "Default true: an opening outside the range of your data is evaluated at the nearest end of that range (it is still marked as extrapolated)."],
+      ["`min_flow`", "number", "Default 0. Estimated flows below this value are raised to it."],
+    ],
+    requestCaption: "Example: three data points, degree 3 requested, flow estimated at 5 %, 50 % and 110 % opening.",
+    response: [
+      ["`fit.equation`", "text", "–", "The fitted equation, for example `Flow(Opening) = +2458.61*Opening +143.197`."],
+      ["`fit.terms`", "array", "–", "One entry per power of the opening, highest power first: `power`, `coefficient`, `standard_error`."],
+      ["`fit.r_squared`", "number or null", "–", "How well the curve fits the points (1 is a perfect fit)."],
+      ["`fit.standard_error_y`", "number or null", "flow unit", "Typical distance between the points and the curve."],
+      ["`fit.f_statistic`", "number or null", "–", "F statistic of the fit. null when it has no meaning (all flows equal, or the points fit exactly)."],
+      ["`fit.degree_requested`, `degree_used`, `degree_capped`", "integer, integer, true/false", "–", "The degree you asked for, the degree fitted, and whether it was reduced."],
+      ["`fit.n_points`, `df_residual`", "integer", "count", "Number of points, and points minus the number of coefficients."],
+      ["`fit.ss_regression`, `ss_residual`", "number", "(flow unit)²", "Regression and residual sums of squares."],
+      ["`fit.opening_range`", "object", "%", "`min` and `max` opening of your data."],
+      ["`estimates[]`", "array", "–", "For each requested opening: `opening`, `opening_used`, `flow` (in your flow unit), `extrapolated` (outside the range of your data), `floor_applied`."],
+      ["`warnings[]`", "array of text", "–", "Plain-language notes, such as that the degree was reduced."],
+    ],
+    reading: [
+      "Three points can only support a straight line, so degree 3 was reduced to 1 (`degree_capped` true) and a warning says so.",
+      "5 % and 110 % are outside the data (19.7 % to 89.7 %), so they are `extrapolated` and, because `clip_to_fit_range` is true, evaluated at 19.7 % and 89.7 % (`opening_used`).",
+      "The flows in `estimates`, `standard_error_y` and the coefficients are in the unit you used for `flow_values`; the response has no flow unit of its own.",
+    ],
     errors: ["validation_error", "fit_failed"],
-    errExample: '{\n  "status": "error",\n  "error": {\n    "code": "fit_failed",\n    "message": "A degree-2 fit needs at least 3 different opening values; the data contain only 1.",\n    "details": { "distinct_opening_values": 1, "required": 3, "degree_used": 2 }\n  },\n  "request_id": "a1b2c3d4e5f6"\n}',
-    errSpecial: { validation_error: "A list is shorter than 3 points, the two lists differ in length, the degree is outside 1 to 10, or a value is not a finite number." },
+    errSpecial: { validation_error: "A list has fewer than 3 points, the two lists differ in length, the degree is outside 1 to 10, or a value is not a finite number." },
+    errExample: DATA._err_fit,
+    notes: [
+      "**Units:** you decide the unit of the flow by the numbers you send (kg/h, m³/h, t/d, ...). The response is in that same unit, and the API does not convert anything. Openings are always in %.",
+      "Use the lowest degree that describes your data. A high degree through few points follows the noise and can behave wildly outside the range.",
+      "`null` in a statistic means it is not defined for these data. The API never returns NaN or infinity.",
+      "`meta` holds only `request_id` and `elapsed_ms`, because there is no composition.",
+    ],
   },
 ];
 
@@ -226,12 +197,11 @@ children.push(
   new Paragraph({ spacing: { before: 2600, after: 120 }, children: [new TextRun({ text: "THERMO PROPERTY API", font: FONT, size: 22, bold: true, color: BLUE, characterSpacing: 60 })] }),
   new Paragraph({ spacing: { after: 120 }, children: [new TextRun({ text: "Integration Guide", font: FONT, size: 72, bold: true, color: NAVY })] }),
   new Paragraph({ spacing: { after: 600 }, border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: BLUE, space: 8 } },
-    children: [new TextRun({ text: "How to call the API, with the request, response and errors of every endpoint", font: FONT, size: 28, color: GREY })] }),
+    children: [new TextRun({ text: "Stream properties, enthalpy and heat duty, and flow versus valve opening", font: FONT, size: 28, color: GREY })] }),
   table(null, [
     ["Version", VERSION],
     ["Date", "23 October 2026"],
     ["Base URL", BASE],
-    ["Interactive documentation", BASE + "/docs"],
     ["Format", "HTTP and JSON (UTF-8)"],
     ["Access", "Company network or VPN"],
     ["Authentication", "None in the current deployment"],
@@ -240,151 +210,162 @@ children.push(
   new Paragraph({ spacing: { after: 100 }, children: [new TextRun({ text: "Contents", font: FONT, size: 26, bold: true, color: NAVY })] }),
   table(["Section", "Title", "Endpoint"], [
     ["1", "Overview", ""], ["2", "Request and response format", ""], ["3", "Errors", ""],
+    ["4", "Terms used in this guide", ""], ["5", "CAS numbers", ""],
     ...apis.map((a) => [String(a.n), a.title, `${a.method} ${a.path}`]),
-    ["14", "Health check", "GET /health"], ["15", "Client examples and version history", ""],
+    ["9", "Health check", "GET /health"],
   ], [1100, 5200, 3338]),
 );
 
 // ---- 1 overview
 children.push(...H1("1. Overview"));
-children.push(P("The Thermo Property API calculates thermodynamic properties of mixtures. It has four groups. Every endpoint uses the same style of request and returns the same style of response, so once one works, the others follow."));
-children.push(table(["Group", "Sections", "Use it when"], [
-  ["**Property APIs**", "4 to 10", "You need one specific property (heat capacity, density, molecular weight, vapor fraction, or the vapor / aqueous / organic split). Vapor–liquid model, one endpoint per property."],
-  ["**EOS Stream API**", "11", "You need the complete stream result in one call, or the phase behaviour matters (for example water with hydrocarbons). Peng-Robinson equation of state, three-phase flash."],
-  ["**Enthalpy API**", "12", "You need the enthalpy of a stream at an inlet and an outlet condition and the heat duty between them."],
-  ["**Vent API**", "13", "You have measured flow at several valve openings and need the flow at other openings. Works on your own data points."],
-], [2200, 1100, 6338]));
-children.push(H2("Endpoints"));
-children.push(table(["Method and path", "Section", "Returns"], [
-  ...apis.map((a) => [`${a.method} ${a.path}`, String(a.n), a.title]),
-  ["GET /health", "14", "Service status and version"],
-], [3400, 1000, 5238]));
-children.push(H2("Rules that apply everywhere"));
+children.push(P("The Thermo Property API calculates thermodynamic results for process streams. This guide describes the three calculations you will use and a health check. All of them are called the same way, and all answer in the same format."));
+children.push(table(["API", "Section", "The question it answers", "You send", "You get"], [
+  ["**Stream properties**", "6", "Which phases does the stream have at this temperature and pressure, and what are their amounts and properties?", "T, P, components (CAS), mole fractions", "Phase situation; for each phase its fraction, molecular weight, heat capacity and density; values of the mixture"],
+  ["**Enthalpy and heat duty**", "7", "How much heat is needed to take the stream from an inlet to an outlet condition?", "Inlet T and P, outlet T and P, components (CAS), mole fractions", "Enthalpy at both conditions and the heat duty (kJ/mol and kJ/kg)"],
+  ["**Flow versus valve opening**", "8", "What flow does the valve give at a given opening?", "Your measured opening and flow points, a degree, the openings to estimate", "The fitted equation with its statistics, and the estimated flow at each opening"],
+], [1700, 800, 2900, 2000, 2238]));
+children.push(H2("Four rules for every request"));
 children.push(...bullets([
-  "All calculations use **POST** with a JSON body and the header `Content-Type: application/json`. `/health` uses GET.",
-  "Temperature in **K**, pressure in **Pa**. Components are chemical names or CAS numbers. Mole fractions may also be given as mole percent; they are rescaled to add up to 1.",
-  "A phase that does not exist at the given conditions is returned as **null**, never 0, and this is not an error.",
-  "Values come back at full precision; round them in your own software. Unknown request fields are ignored.",
-  "Every response has a `units` object that states the unit of each returned value, and a `request_id` for support.",
-  "A calculation that takes longer than 30 seconds is stopped (error `calculation_timeout`).",
+  "**Components are CAS numbers**, for example `7732-18-5` for water. Names are not accepted: a name returns an error that tells you which entry to change (section 5).",
+  "**Compositions are mole fractions, not mole percent.** 25 % is written 0.25, and all fractions of a stream add up to 1.",
+  "**Units:** temperature in K and pressure in Pa. In the Vent API you choose the unit of the flow, and the answer comes back in that same unit.",
+  "Send **POST** with a JSON body and the header `Content-Type: application/json`. Every answer has the same layout (section 2), and every error has a code (section 3).",
 ]));
+children.push(H2("Address"));
+children.push(table(null, [["Base URL", BASE], ["Example", `${BASE}/eos_stream_calc`], ["Time limit", "A calculation that takes longer than 30 seconds is stopped (error `calculation_timeout`)."]], [2000, 7638]));
 
 // ---- 2 request and response format
 children.push(...H1("2. Request and response format"));
-children.push(H2("Common request (all calculations except sections 12 and 13)"));
-children.push(table(["Field", "Type", "Rules"], [
-  ["`T`", "number", "Temperature in K. Must be above 0."],
-  ["`P`", "number", "Pressure in Pa. Must be above 0 (1 atm = 101325 Pa)."],
-  ["`components`", "array of text", "Names or CAS numbers, for example `\"water\"` or `\"7732-18-5\"`. At least one, no duplicates, no limit on the number."],
-  ["`zs`", "array of numbers", "Mole fractions in the same order and length as `components`. Not negative; the sum must be above 0. Rescaled to add up to 1; entries of 0 are allowed."],
-], [1700, 1900, 6038]));
-children.push(gap(80));
-children.push(...code(DATA["/cp_calc"].request));
+children.push(H2("Request"));
+children.push(P("Send the fields listed in each API section as one JSON object. The two fields that describe a stream are the same in sections 6 and 7:", { after: 80 }));
+children.push(table(["Field", "Type", "Rule"], COMP_ROWS, [1900, 1700, 6038]));
+children.push(gap(60));
+children.push(P("Example of a correct stream: water 25 % and hexane 75 % is written like this.", { after: 60 }));
+children.push(...code('"components": ["7732-18-5", "110-54-3"],\n"zs": [0.25, 0.75]'));
 children.push(H2("Successful response (HTTP 200)"));
-children.push(P("Every success has the same four parts. The example is the response of section 4.", { after: 80 }));
-children.push(...code(DATA._envelope));
+children.push(P("Every success has the same four parts. The complete response of each API is shown in its own section.", { after: 80 }));
 children.push(table(["Part", "Meaning"], [
   ["`status`", "Always `\"success\"`."],
-  ["`data`", "The results; their fields are listed in each endpoint section."],
-  ["`units`", "Unit of each value in `data`."],
-  ["`meta`", "`request_id` (quote it when you contact support), `elapsed_ms` (server time) and, for calculations with a composition, `zs_normalized` (true if your fractions were rescaled)."],
+  ["`data`", "The results. Their fields are explained in each API section."],
+  ["`units`", "The unit of each value in `data`."],
+  ["`meta`", "`request_id` (quote it when you contact support), `elapsed_ms` (server time in milliseconds) and, for requests with a composition, `zs_normalized` (true if your fractions were rescaled to add up to 1)."],
 ], [1500, 8138]));
+children.push(gap(60));
+children.push(P("A phase or value that does not exist is returned as `null`, never as 0, and this is not an error. Numbers are returned at full precision; round them in your own software.", { after: 60 }));
 children.push(H2("Error response (HTTP 4xx or 5xx)"));
 children.push(...code('{\n  "status": "error",\n  "error": {\n    "code": "validation_error",\n    "message": "Request body is invalid.",\n    "details": [ { "field": "T", "message": "Input should be greater than 0" } ]\n  },\n  "request_id": "a1b2c3d4e5f6"\n}'));
-children.push(P("Use `error.code` in your software; it never changes. `message` is for people, and `details` carries the specifics (a list of fields for `validation_error`)."));
+children.push(P("Use `error.code` in your software; it never changes. `message` is for people, and `details` gives the specifics (for `validation_error` a list of fields and what is wrong with each)."));
 
 // ---- 3 errors
 children.push(...H1("3. Errors"));
-children.push(P("Always check the HTTP status first: 200 is success, anything else is an error in the format shown in section 2."));
+children.push(P("Always check the HTTP status first: 200 is success, anything else is an error in the format of section 2."));
 children.push(table(["Error code", "HTTP", "Cause", "What to do"], [
-  ["`validation_error`", "422", "The request is invalid: bad JSON, wrong type, T or P not above 0, lists of different length, negative fractions, duplicate or empty component, too few data points.", "Read `error.details` and fix the listed fields."],
-  ["`unknown_component`", "422", "A name or CAS number is not known. `details.component` gives it.", "Use another spelling or the CAS number."],
+  ["`validation_error`", "422", "The request is invalid: bad JSON, wrong type, a component that is not a CAS number, T or P not above 0, lists of different length, a negative or repeated entry, too few data points.", "Read `error.details` and fix the listed fields."],
+  ["`unknown_component`", "422", "A CAS number is written correctly but is not in the component database.", "Check the number; use another component."],
+  ["`property_unavailable`", "422", "Data the model needs for a component is missing.", "Remove or replace that component."],
   ["`flash_failed`", "422", "The equilibrium calculation failed for this state.", "Check temperature, pressure and composition."],
-  ["`property_unavailable`", "422", "Data needed for a component is missing. `details.components` lists them.", "Remove or replace the component."],
-  ["`water_required`", "422", "A triphase endpoint (sections 8 to 10) was called without water.", "Add water, or use the EOS Stream API."],
-  ["`fit_failed`", "422", "Vent API only: too few different opening values for the degree.", "Provide more different openings or lower the degree."],
-  ["`unauthorized`", "401", "An API key is enabled on the server and the `X-API-Key` header is missing or wrong.", "Send the correct key."],
+  ["`fit_failed`", "422", "Vent API only: too few different opening values for the degree.", "Send more different openings, or lower the degree."],
+  ["`unauthorized`", "401", "An API key is enabled and the `X-API-Key` header is missing or wrong.", "Send the correct key."],
   ["`not_found`", "404", "The URL does not exist.", "Check the path, including `/api`."],
   ["`method_not_allowed`", "405", "Wrong HTTP method, for example GET on a calculation.", "Use POST."],
   ["`calculation_failed`", "500", "The model could not be built.", "Report it with the `request_id`."],
   ["`internal_error`", "500", "Unexpected server error.", "Report it with the `request_id`."],
   ["`calculation_timeout`", "504", "The calculation took longer than 30 seconds.", "Simplify the input, or contact support."],
 ], [2100, 650, 4088, 2800]));
+children.push(H2("Example: a name instead of a CAS number (HTTP 422)"));
+children.push(...code(DATA._err_names));
 children.push(H2("Handling errors in your software"));
 children.push(...bullets([
   "Decide by HTTP status and `error.code`, never by the text of `message`.",
   "Do not repeat a 422 request unchanged: the input has to change. A 504 may be repeated once with simpler input.",
-  "Log the `request_id` of every failure; it lets support find the request in the server log.",
+  "Log the `request_id` of every failure; support can find the request with it.",
 ]));
+
+// ---- 4 terms
+children.push(...H1("4. Terms used in this guide"));
+children.push(table(["Term", "Meaning"], [
+  ["**CAS number**", "The international identifier of a chemical, for example 7732-18-5 for water. The API accepts components only as CAS numbers (section 5)."],
+  ["**Mole fraction**", "The moles of one component divided by the total moles of the stream. It is a number from 0 to 1 (0.25 = 25 %); all mole fractions of a stream add up to 1. It is never given in percent."],
+  ["**Phase**", "A physically separate part of the stream: **vapor** (gas), **aqueous** liquid (the water-rich liquid) and **organic** liquid (the hydrocarbon-rich liquid)."],
+  ["**Vapor fraction, V**", "The share of the stream's moles that is vapor: 0 means all liquid, 1 means all vapor. The liquid fraction is L = 1 − V."],
+  ["**Phase fraction, beta**", "The share of the stream's moles that is in one particular phase. The betas of the phases that exist add up to 1."],
+  ["**case**", "Which phases the calculation found: `vapor-only`; `liquid-only`; `two-phase vapor-liquid (VL)` = vapor and one liquid; `two-phase liquid-liquid (LL)` = aqueous and organic liquid, no vapor; `three-phase vapor-liquid-liquid (VLLE)` = vapor plus both liquids."],
+  ["**Peng-Robinson equation of state**", "The thermodynamic model behind sections 6 and 7. It describes real gas and liquid behaviour and lets the calculation decide which phases exist."],
+  ["**MW**", "Molecular weight: the mass of one mole, in g/mol."],
+  ["**Cp**", "Molar heat capacity: the energy needed to warm one mole by one kelvin, in J/mol/K. `Cp_mass_kJ_kgK` is the same per kilogram, in kJ/kg/K."],
+  ["**rho_mass, rho_molar**", "Density: mass per volume in kg/m³, and moles per volume in kmol/m³."],
+  ["**Enthalpy**", "The energy content of the stream, per mole (kJ/mol) or per kilogram (kJ/kg), measured from the model's reference state. Only differences between two conditions are meaningful."],
+  ["**Heat duty**", "Outlet enthalpy minus inlet enthalpy: the heat needed to take the stream from inlet to outlet. Positive means heat must be added (heating, vaporisation); negative means heat is released (cooling, condensation). `heat_duty_molar` is per mole (kJ/mol), `sp_duty` per kilogram (kJ/kg)."],
+  ["**Interaction parameter (kij)**", "A number the model uses for how strongly two components affect each other. For ethylene and ethane a calibrated value of 0.015 is used; `ethylene_ethane_kij_override` tells you when."],
+  ["**Opening**", "The valve opening in % (Vent API)."],
+  ["**Polynomial fit, degree**", "A curve Flow = a·Opening^d + … + c·Opening + e through your points. The degree d is the highest power: 1 is a straight line, 2 a parabola."],
+  ["**LINEST**", "The Excel function for the same least-squares fit. The coefficients and statistics of the Vent API are those LINEST gives."],
+  ["**R²**", "How well the curve follows your points: 1 is a perfect fit, values near 0 are a poor one."],
+  ["**Standard error of the estimate (SE y)**", "The typical distance between your points and the curve, in the unit of your flow."],
+  ["**F statistic, residual degrees of freedom**", "Standard statistics of the fit. The degrees of freedom are the number of points minus the number of coefficients. The F statistic is `null` when it has no meaning."],
+  ["**Extrapolated**", "An opening outside the range of your data. The estimate is less reliable there, so it is marked, and by default evaluated at the nearest end of your range."],
+  ["**null**", "The value does not exist or is not defined, for example the vapor of a stream that has no vapor."],
+  ["**request_id**", "A short code identifying one request. Quote it when you contact support."],
+], [2600, 7038]));
+
+// ---- 5 CAS numbers
+children.push(...H1("5. CAS numbers"));
+children.push(P("A CAS number (CAS Registry Number) is the worldwide identifier of a chemical. It is printed on safety data sheets and in every chemical database, and it does not depend on language or spelling. The API identifies components **only** by CAS number."));
+children.push(H2("How to write it"));
+children.push(...bullets([
+  "Three groups of digits joined by hyphens: 2 to 7 digits, then 2 digits, then 1 digit. Examples: `7732-18-5` (water), `74-82-8` (methane), `74-84-0` (ethane), `74-85-1` (ethylene), `110-54-3` (n-hexane).",
+  "The last digit is a check digit, so a typing error is detected. `7732-18-4` is not accepted.",
+  "Spaces around the number are ignored. Names, formulas and other spellings (`water`, `H2O`) are not accepted.",
+  "Each CAS number may appear only once in a request.",
+]));
+children.push(H2("What the API answers"));
+children.push(table(["You send", "The API answers"], [
+  ["A name, for example `\"water\"`", "`validation_error`: the message names every entry that is not a CAS number (example in section 3)."],
+  ["A mistyped number, for example `7732-18-4`", "`validation_error`: invalid CAS check digit (below)."],
+  ["A correct number the database does not contain", "`unknown_component`: the message and `error.details.component` name the number (below)."],
+  ["The same CAS number twice", "`validation_error`: duplicate components are not allowed."],
+], [3300, 6338]));
+children.push(gap(60));
+children.push(P("A mistyped number (HTTP 422):", { after: 60 }));
+children.push(...code(DATA._err_typo));
+children.push(P("A correct number that is not in the component database (HTTP 422):", { after: 60 }));
+children.push(...code(DATA._err_unknown));
 
 // ---- API pages
 for (const a of apis) {
   const d = DATA[a.path];
   children.push(...H1(`${a.n}. ${a.title}`, a.group));
-  children.push(new Paragraph({ spacing: { after: 60 }, children: [new TextRun({ text: a.method, font: MONO, size: 22, bold: true, color: "FFFFFF", shading: { type: ShadingType.CLEAR, fill: BLUE, color: "auto" } }), new TextRun({ text: "  " + a.path, font: MONO, size: 22, bold: true, color: NAVY })] }));
-  children.push(P(`${BASE}${a.path}`, { run: { size: 19, color: GREY }, after: 100 }));
+  children.push(...endpointLine(a.method, a.path));
   children.push(P(a.purpose));
   children.push(H2("Request"));
-  if (a.reqTable) children.push(table(["Field", "Type", "Rules"], a.reqTable, [2100, 1700, 5838]), gap(80));
-  else children.push(P(a.req, { after: 80 }));
+  children.push(reqTable(a.request));
+  children.push(gap(60));
   children.push(...code(d.request));
-  const caption = a.exampleNote || (a.group === "Property APIs" ? WH_CAPTION : null) || (a.path === "/eos_stream_calc" ? WH_CAPTION_EOS : null);
-  if (caption) children.push(P(caption, { run: { size: 18, color: GREY }, after: 60 }));
+  children.push(caption(a.requestCaption));
   children.push(H2("Response"));
-  children.push(P("The example is the `data` part of the response; `units` and `meta` are as in section 2.", { after: 80, run: { size: 19, color: GREY } }));
-  children.push(table(["Field", "Type", "Unit", "Description"], a.fields, [2500, 1500, 1200, 4438]));
-  children.push(gap(80));
-  children.push(...code(d.data));
+  children.push(respTable(a.response));
+  children.push(gap(60));
+  children.push(P("Complete response for the example above (HTTP 200):", { after: 60 }));
+  children.push(...code(d.response));
+  children.push(H2("Reading the example"));
+  children.push(...bullets(a.reading));
   children.push(H2("Errors"));
-  children.push(P(a.errors.map((c) => `\`${c}\` (${ERR[c][0]})`).join(", ") + ". Section 3 explains each code and what to do.", { after: 60 }));
-  const specific = a.errors.filter((c) => (a.errSpecial && a.errSpecial[c]) || API_SPECIFIC_ERRORS.includes(c));
-  if (specific.length) children.push(...bullets(specific.map((c) => `\`${c}\`: ${(a.errSpecial && a.errSpecial[c]) || ERR[c][1]}`)));
-  if (a.errExample) children.push(...code(a.errExample));
-  const notes = a.notes.filter((n) => !n.startsWith(WH_NOTE));
-  if (notes.length) { children.push(H2("Notes")); children.push(...bullets(notes)); }
+  children.push(errTable(a.errors, a.errSpecial));
+  if (a.errExample) { children.push(gap(60), P("Example of `fit_failed` (all openings equal), HTTP 422:", { after: 60 }), ...code(a.errExample)); }
+  children.push(H2("Notes"));
+  children.push(...bullets(a.notes));
 }
 
-// ---- 14 health
-children.push(...H1("14. Health check", "System"));
-children.push(new Paragraph({ spacing: { after: 60 }, children: [new TextRun({ text: "GET", font: MONO, size: 22, bold: true, color: "FFFFFF", shading: { type: ShadingType.CLEAR, fill: BLUE, color: "auto" } }), new TextRun({ text: "  /health", font: MONO, size: 22, bold: true, color: NAVY })] }));
-children.push(P(`${BASE}/health`, { run: { size: 19, color: GREY }, after: 100 }));
+// ---- 9 health
+children.push(...H1("9. Health check", "System"));
+children.push(...endpointLine("GET", "/health"));
 children.push(P("Confirms that the service is running and tells you which version is deployed. It needs no body and no authentication, and is suitable for uptime monitoring."));
 children.push(H2("Response"));
-children.push(table(["Field", "Type", "Description"], [["`status`", "text", "`ok` while the service is alive."], ["`version`", "text", "The deployed API version."]], [2000, 1500, 6138]));
-children.push(gap(80));
+children.push(table(["Field", "Type", "Meaning"], [["`status`", "text", "`ok` while the service is alive."], ["`version`", "text", "The deployed API version."]], [2000, 1500, 6138]));
+children.push(gap(60));
 children.push(...code(DATA._health));
 children.push(H2("Errors"));
-children.push(P("None. If the service is down, the request fails at the network level or returns a 5xx from the web server."));
-
-// ---- 15 examples and history
-children.push(...H1("15. Client examples and version history"));
-children.push(H2("Postman"));
-children.push(...bullets([
-  `Method **POST**, URL \`${BASE}/eos_stream_calc\` (or any other endpoint).`,
-  "Body → **raw** → **JSON**, paste a request from the endpoint section, press **Send**. No API key is needed.",
-]));
-children.push(H2("curl (Windows Command Prompt)"));
-children.push(...code(`curl.exe -X POST ${BASE}/vf_calc -H "Content-Type: application/json" ^\n  -d "{\\"T\\":300,\\"P\\":101325,\\"components\\":[\\"water\\",\\"hexane\\"],\\"zs\\":[0.5,0.5]}"`));
-children.push(H2("Python"));
-children.push(...code(`import requests
-
-BASE = "${BASE}"
-payload = {"T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5]}
-
-resp = requests.post(f"{BASE}/eos_stream_calc", json=payload, timeout=60)
-body = resp.json()
-if resp.ok:                         # HTTP 200
-    print(body["data"]["case"], body["data"]["mixture"]["Cp"])
-else:                               # HTTP 4xx / 5xx
-    err = body["error"]
-    print(err["code"], err["message"], "request:", body["request_id"])`));
-children.push(H2("Version history"));
-children.push(table(["Version", "Change"], [
-  ["2.3.0", "Added the Vent API (flow versus valve opening)."],
-  ["2.2.0", "Added the Enthalpy API (enthalpy at inlet and outlet, heat duty)."],
-  ["2.1.0", "Added the EOS Stream API. Documentation grouped by API."],
-  ["2.0.0", "Consistent response format with units, proper HTTP status codes and error codes, strict validation, null for absent phases."],
-], [1300, 8338]));
+children.push(P("None. If the service is down, the request fails at the network level or the web server answers with a 5xx status."));
 
 // ----------------------------------------------------------------------------- document
 const footerText = (t) => new TextRun({ text: t, font: FONT, size: 16, color: GREY });
@@ -394,7 +375,7 @@ const doc = new Document({
     default: { document: { run: { font: FONT, size: 21 } } },
     paragraphStyles: [
       { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 34, bold: true, font: FONT, color: NAVY }, paragraph: { spacing: { before: 0, after: 120 }, outlineLevel: 0 } },
-      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 24, bold: true, font: FONT, color: BLUE }, paragraph: { spacing: { before: 200, after: 80 }, outlineLevel: 1 } },
+      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 24, bold: true, font: FONT, color: BLUE }, paragraph: { spacing: { before: 150, after: 60 }, outlineLevel: 1 } },
     ],
   },
   numbering: { config: [{ reference: "bullets", levels: [{ level: 0, format: LevelFormat.BULLET, text: "•", alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 540, hanging: 270 } } } }] }] },

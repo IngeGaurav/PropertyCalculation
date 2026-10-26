@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **API version** | 2.3.0 |
+| **API version** | 3.0.0 |
 | **Base URL** | `http://192.168.11.216:4300/api` |
 | **Interactive documentation** | `http://192.168.11.216:4300/api/docs` (Swagger UI) · `http://192.168.11.216:4300/api/openapi.json` (machine-readable schema) |
 | **Protocol / format** | HTTP, JSON (UTF-8) |
@@ -120,7 +120,7 @@ Every calculation request passes through the same stages.
 | 2. Authentication | Checked only if an API key is enabled on the server. | `401 unauthorized` |
 | 3. Validation | JSON syntax and field types are checked. T and P must be greater than 0. The two lists must have equal length. Mole fractions must be finite and not negative, and their sum must be greater than 0. Components must not be empty or duplicated. | `422 validation_error` |
 | 4. Execution | The calculation runs in a worker thread with a 30 second limit. | `504 calculation_timeout` |
-| 5. Component lookup | Each name or CAS number is resolved to a chemical (stream calculations; not used by the Vent API). | `422 unknown_component` |
+| 5. Component lookup | Each CAS number is resolved to a chemical (stream calculations; not used by the Vent API). | `422 unknown_component` |
 | 6. Calculation | Property APIs: a vapor–liquid flash. EOS Stream API: a three-phase flash with the equation of state. Enthalpy API: that flash at the inlet and at the outlet condition. Vent API: a least-squares polynomial fit. | `422 flash_failed` |
 | 7. Property | The endpoint-specific result is built (see sections 7 to 10). | `422 property_unavailable` or `422 water_required` |
 | 8. Response | The result is returned in the standard success envelope (section 5). | n/a |
@@ -137,7 +137,7 @@ The seven Property APIs and the EOS Stream API (sections 7 and 8) take the same 
 | --- | --- | --- | --- |
 | `T` | number | `423.15` | Temperature in K. Must be greater than 0. |
 | `P` | number | `29411.81` | Pressure in Pa. Must be greater than 0. |
-| `components` | array of strings | `["methane", "ethane"]` | At least one entry. Each entry is a chemical name or a CAS number, for example `"water"` or `"7732-18-5"`. Spaces around a name are removed. Empty strings and duplicates (case-insensitive) are rejected. There is no upper limit on the number of components. |
+| `components` | array of strings | `["74-82-8", "74-84-0"]` | At least one entry. **CAS numbers only**, for example `"7732-18-5"` (water). A name such as `"water"` is rejected with `validation_error` that names the entry. The CAS format and its check digit are verified. Spaces around a value are removed. Empty strings and duplicates are rejected. There is no upper limit on the number of components. |
 | `zs` | array of numbers | `[0.5, 0.5]` | Mole fractions in the same order and of the same length as `components`. Each must be finite and at least 0. The sum must be greater than 0. |
 
 Send all four fields explicitly. The defaults exist only for convenience.
@@ -150,7 +150,7 @@ Send all four fields explicitly. The defaults exist only for convenience.
 {
   "T": 300,
   "P": 101325,
-  "components": ["water", "hexane"],
+  "components": ["7732-18-5", "110-54-3"],
   "zs": [0.5, 0.5]
 }
 ```
@@ -215,11 +215,11 @@ HTTP `4xx` or `5xx`.
 | 404 | `not_found` | Unknown URL. | Check the path, including the `/api` prefix. |
 | 405 | `method_not_allowed` | Wrong HTTP method, for example `GET` on a calculation endpoint. | Use `POST`. |
 | 422 | `validation_error` | Invalid body: bad JSON, wrong types, T or P not above 0, lists of different length, negative or non-finite fractions, sum of 0, empty or duplicate component. | Read `error.details` and fix the listed fields. |
-| 422 | `unknown_component` | A name or CAS number is not known. `details.component` gives the value. | Use another spelling or the CAS number. |
+| 422 | `unknown_component` | A CAS number is correctly written but is not in the component database. `details.component` gives the value. | Check the CAS number or use another component. |
 | 422 | `flash_failed` | The phase-equilibrium calculation failed for this state. | Check T, P and composition; try other conditions. |
 | 422 | `fit_failed` | The data cannot be fitted (Vent API): fewer different opening values than the degree needs. `details` gives the numbers. | Provide more different openings or lower the degree. |
 | 422 | `property_unavailable` | Data needed for the calculation does not exist (for example critical properties of a rarely used chemical). `details.components` lists them. | Remove or replace the component. |
-| 422 | `water_required` | A `triphase_*` endpoint was called without water in the mixture. | Include `"water"` or `"7732-18-5"`, or use the EOS Stream API. |
+| 422 | `water_required` | A `triphase_*` endpoint was called without water in the mixture. | Include water (`"7732-18-5"`), or use the EOS Stream API. |
 | 500 | `calculation_failed` | The model could not be built. | Report it with the `request_id`. |
 | 500 | `internal_error` | Unexpected server error. | Report it with the `request_id`. |
 | 504 | `calculation_timeout` | The calculation exceeded the 30 second limit. | Simplify the input or contact the administrator. |
@@ -275,7 +275,7 @@ HTTP `4xx` or `5xx`.
   "status": "error",
   "error": {
     "code": "water_required",
-    "message": "Triphase endpoints require water in the mixture (use 'water' or '7732-18-5').",
+    "message": "Triphase endpoints require water in the mixture (use '7732-18-5').",
     "details": null
   },
   "request_id": "a1b2c3d4e5f6"
@@ -290,7 +290,7 @@ One endpoint per property, based on a vapor–liquid equilibrium (VLE) model. Ea
 
 Unless stated otherwise the examples use this mixture:
 
-> **Example mixture:** water 50 mol % and hexane 50 mol % at T = 300 K and P = 101325 Pa. At these conditions the model finds a single liquid phase, so vapor values are `null`. Values are rounded to 7 significant digits for readability. The API returns full precision.
+> **Example mixture:** water 0.5 and hexane 0.5 (mole fractions) at T = 300 K and P = 101325 Pa. At these conditions the model finds a single liquid phase, so vapor values are `null`. Values are rounded to 7 significant digits for readability. The API returns full precision.
 
 ---
 
@@ -320,7 +320,7 @@ Returns the heat capacity of the liquid phase, the vapor phase and the whole mix
 **Example request**
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 **Example response** (HTTP 200)
@@ -365,7 +365,7 @@ Returns the density of the mixture at T and P.
 **Example request**
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 **Example response** (HTTP 200)
@@ -406,7 +406,7 @@ Returns the molecular weight of the liquid phase, the vapor phase and the whole 
 **Example request**
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 **Example response** (HTTP 200)
@@ -440,7 +440,7 @@ Returns the fraction of the mixture that is vapor and the fraction that is liqui
 **Example request**
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 **Example response** (HTTP 200)
@@ -485,7 +485,7 @@ Returns the heat capacity of the vapor, aqueous (water) and organic phases of a 
 **Example request**
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 **Example response** (HTTP 200)
@@ -526,7 +526,7 @@ Returns the molecular weight of the vapor, aqueous and organic phases.
 **Example request**
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 **Example response** (HTTP 200)
@@ -568,7 +568,7 @@ Returns how the total mixture divides into vapor, aqueous and organic phases.
 **Example request**
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 **Example response** (HTTP 200)
@@ -641,7 +641,7 @@ The `mixture` object has `MW` (g/mol), `Cp` (J/mol/K), `Cp_mass_kJ_kgK` (kJ/kg/K
 **Example 1: two liquid phases** (water/hexane 50/50, 300 K, 101325 Pa)
 
 ```json
-{ "T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }
+{ "T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }
 ```
 
 Response (HTTP 200):
@@ -672,7 +672,7 @@ Response (HTTP 200):
 
 **Example 2: vapor and aqueous liquid** (same mixture at 351 K)
 
-Request `{ "T": 351, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5] }` returns `case` = `two-phase vapor-liquid (VL)`, `V` = 0.8310612, `vapor` with `beta` 0.8310612, `MW` 59.02314, `Cp` 112.9 and `rho_mass` 2.101125, `aqueous` with `beta` 0.1689388, `MW` 18.01528, `Cp` 81.78329 and `rho_mass` 816.244, `organic` = `null`, and `mixture` with `MW` 52.09532, `Cp` 107.6432 and `rho_mass` 2.231136.
+Request `{ "T": 351, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5] }` returns `case` = `two-phase vapor-liquid (VL)`, `V` = 0.8310612, `vapor` with `beta` 0.8310612, `MW` 59.02314, `Cp` 112.9 and `rho_mass` 2.101125, `aqueous` with `beta` 0.1689388, `MW` 18.01528, `Cp` 81.78329 and `rho_mass` 816.244, `organic` = `null`, and `mixture` with `MW` 52.09532, `Cp` 107.6432 and `rho_mass` 2.231136.
 
 **Example 3: gas, no water** (methane/ethane 50/50, 423.15 K, 29411.81 Pa)
 
@@ -702,8 +702,8 @@ Returns the enthalpy of one stream at an inlet condition and at an outlet condit
 | `P_in` | number | `254920` | Inlet pressure in Pa. Must be greater than 0. |
 | `T_out` | number | `368` | Outlet temperature in K. Must be greater than 0. |
 | `P_out` | number | `254720` | Outlet pressure in Pa. Must be greater than 0. |
-| `components` | array of strings | `["methane", "ethane"]` | Names or CAS numbers, as in section 4. |
-| `zs` | array of numbers | `[0.5, 0.5]` | Mole fractions **or mole percent**, same length and order as `components`. They are rescaled to sum to 1 (`meta.zs_normalized` is then `true`). |
+| `components` | array of strings | `["74-82-8", "74-84-0"]` | CAS numbers only, as in section 4. |
+| `zs` | array of numbers | `[0.5, 0.5]` | **Mole fractions, not mole percent** (0.25 means 25 %), same length and order as `components`. They should add up to 1; a small difference is rescaled (`meta.zs_normalized` is then `true`). |
 
 Send all six fields explicitly. The defaults exist only for convenience.
 
@@ -741,7 +741,7 @@ Send all six fields explicitly. The defaults exist only for convenience.
 | `heat_duty_molar` | kJ/mol | Outlet minus inlet enthalpy, per mole. Positive: heat is absorbed (heating, vaporisation). Negative: heat is released (cooling, condensation). |
 | `sp_duty` | kJ/kg | Specific heat duty: outlet minus inlet enthalpy, per kilogram. |
 
-**Example 1: C2 stream, heated from 300 K to 368 K** (components given as CAS numbers, mole percent)
+**Example 1: C2 stream, heated from 300 K to 368 K** (CAS numbers, mole fractions)
 
 ```json
 {
@@ -772,11 +772,11 @@ Response (HTTP 200):
 }
 ```
 
-`zs_normalized` is `true` because the values were given in mole percent and add up to 100.
+`zs_normalized` is `true` only when the fractions did not add up to exactly 1 and were rescaled.
 
 **Example 2: water, liquid to vapor** (water, 300 K to 400 K at 101325 Pa)
 
-The request `{ "T_in": 300, "P_in": 101325, "T_out": 400, "P_out": 101325, "components": ["water"], "zs": [1] }` returns `vapor_fraction` 0.0 at the inlet and 1.0 at the outlet, `heat_duty_molar` = 48.95733 kJ/mol and `sp_duty` = 2717.545 kJ/kg. The duty includes the latent heat of vaporisation.
+The request `{ "T_in": 300, "P_in": 101325, "T_out": 400, "P_out": 101325, "components": ["7732-18-5"], "zs": [1] }` returns `vapor_fraction` 0.0 at the inlet and 1.0 at the outlet, `heat_duty_molar` = 48.95733 kJ/mol and `sp_duty` = 2717.545 kJ/kg. The duty includes the latent heat of vaporisation.
 
 **Example 3: cooling** (the C2 stream of example 1 from 368 K back to 300 K)
 
@@ -804,7 +804,7 @@ Fits a polynomial to measured flow versus valve opening and estimates the flow a
 | Field | Type | Default | Rules |
 | --- | --- | --- | --- |
 | `opening_values` | array of numbers | `[19.7, 49.6, 89.7]` | Valve opening of each data point, in %. At least 3 and at most 10 000 values, all finite. |
-| `flow_values` | array of numbers | `[48601, 122050, 220698]` | Flow measured at each opening, in any one consistent unit. Same length as `opening_values`. |
+| `flow_values` | array of numbers | `[48601, 122050, 220698]` | Flow measured at each opening, in the unit of your data (for example kg/h). Same length as `opening_values`. Every flow value in the response (fit values and estimates) is in the same unit; nothing is converted. |
 | `degree` | integer | `2` | Requested polynomial degree, 1 (linear) to 10. Reduced automatically to what the number of points supports. |
 | `estimate_at` | array of numbers | `[]` | Openings (%) at which to estimate the flow. May be empty to get only the fit. At most 10 000 values. |
 | `clip_to_fit_range` | boolean | `true` | If `true`, an opening outside the fitted range is evaluated at the nearest end of the range. It is still flagged as extrapolated. |
@@ -960,7 +960,7 @@ Confirms that the service is running and reports the deployed version. It is sui
 **Response** (HTTP 200). This endpoint does not use the standard envelope.
 
 ```json
-{ "status": "ok", "version": "2.3.0" }
+{ "status": "ok", "version": "3.0.0" }
 ```
 
 | Field | Description |
@@ -1005,7 +1005,7 @@ This suits systems where water and the organic components are essentially immisc
 
 ### 13.3 Component identification
 
-Components can be given as names (`"water"`, `"methane"`) or CAS numbers (`"7732-18-5"`, `"74-82-8"`). If a name is not recognised, use the CAS number. A CAS number identifies one exact chemical. For example, `74-85-1` is ethene (ethylene) and `74-84-0` is ethane.
+Components are given as **CAS numbers only** (for example `"7732-18-5"` for water, `"74-82-8"` for methane). A CAS number identifies one exact chemical; for example `74-85-1` is ethene (ethylene) and `74-84-0` is ethane. A name is rejected with a `validation_error` that lists the entry; a mistyped number is caught by its check digit; a well-formed number that is not in the database gives `unknown_component`.
 
 ### 13.4 Heat-capacity basis
 
@@ -1035,7 +1035,7 @@ All examples send the request from section 4. Replace the host if the service mo
 {
   "T": 300,
   "P": 101325,
-  "components": ["water", "hexane"],
+  "components": ["7732-18-5", "110-54-3"],
   "zs": [0.5, 0.5]
 }
 ```
@@ -1043,7 +1043,7 @@ All examples send the request from section 4. Replace the host if the service mo
 ### 14.2 curl: Windows Command Prompt
 
 ```bat
-curl.exe -X POST http://192.168.11.216:4300/api/eos_stream_calc -H "Content-Type: application/json" -d "{\"T\":300,\"P\":101325,\"components\":[\"water\",\"hexane\"],\"zs\":[0.5,0.5]}"
+curl.exe -X POST http://192.168.11.216:4300/api/eos_stream_calc -H "Content-Type: application/json" -d "{\"T\":300,\"P\":101325,\"components\":[\"7732-18-5\",\"110-54-3\"],\"zs\":[0.5,0.5]}"
 ```
 
 ### 14.3 curl: Linux, macOS, Git Bash
@@ -1051,7 +1051,7 @@ curl.exe -X POST http://192.168.11.216:4300/api/eos_stream_calc -H "Content-Type
 ```bash
 curl -X POST http://192.168.11.216:4300/api/eos_stream_calc \
   -H "Content-Type: application/json" \
-  -d '{"T":300,"P":101325,"components":["water","hexane"],"zs":[0.5,0.5]}'
+  -d '{"T":300,"P":101325,"components":["7732-18-5","110-54-3"],"zs":[0.5,0.5]}'
 ```
 
 ### 14.4 Python
@@ -1064,7 +1064,7 @@ BASE = "http://192.168.11.216:4300/api"
 payload = {
     "T": 300,
     "P": 101325,
-    "components": ["water", "hexane"],
+    "components": ["7732-18-5", "110-54-3"],
     "zs": [0.5, 0.5],
 }
 
@@ -1091,7 +1091,7 @@ const BASE = "http://192.168.11.216:4300/api";
 const res = await fetch(`${BASE}/eos_stream_calc`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ T: 300, P: 101325, components: ["water", "hexane"], zs: [0.5, 0.5] }),
+  body: JSON.stringify({ T: 300, P: 101325, components: ["7732-18-5", "110-54-3"], zs: [0.5, 0.5] }),
 });
 const body = await res.json();
 if (res.ok) console.log(body.data.case, body.data.mixture.Cp);
@@ -1154,7 +1154,8 @@ else:
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| 3.0.0 | October 2026 | **Breaking:** components must be CAS numbers; names are rejected with `validation_error`. `zs` are mole fractions (mole percent is no longer described or supported as input). Wording of units clarified: flow values come back in the unit the user entered. Frontend validates CAS numbers and shows a hint name next to each number. 236 automated tests. |
 | 2.3.0 | October 2026 | Added the **Vent API** (`POST /vent_flow_calc`): polynomial fit of flow versus valve opening (Excel LINEST equivalent) with coefficient standard errors, R², standard error of the estimate, F statistic and sums of squares, and flow estimates at further openings with extrapolation flags, clipping and a minimum-flow floor. New error code `fit_failed`. |
 | 2.2.0 | October 2026 | Added the **Enthalpy API** (`POST /eos_enthalpy_calc`): enthalpy at an inlet and an outlet condition and the heat duty between them, with a pure-component flash, a multi-component three-phase flash and the calibrated ethylene/ethane interaction parameter. |
 | 2.1.0 | October 2026 | Added the **EOS Stream API** (`POST /eos_stream_calc`). Property APIs and EOS Stream API are grouped in the documentation, with a description, request example and response example for every endpoint. The first-generation `enthalpy_calc` and `std_enthalpy_calc` endpoints were removed; enthalpy is provided by the Enthalpy API from 2.2.0. |
-| 2.0.0 | October 2026 | Consistent response envelope with `units` and `meta`. Proper HTTP status codes and error codes. Strict input validation. Corrected units. `null` for absent phases. Water recognised by name or CAS number. No limit on the number of components. Request ids and a health endpoint. |
+| 2.0.0 | October 2026 | Consistent response envelope with `units` and `meta`. Proper HTTP status codes and error codes. Strict input validation. Corrected units. `null` for absent phases. Water recognised by CAS number. No limit on the number of components. Request ids and a health endpoint. |

@@ -161,7 +161,7 @@ def test_envelope_follows_the_standard_shape_without_composition_fields():
 
 
 def test_composition_endpoints_still_report_zs_normalized():
-    r = client.post("/cp_calc", json={"T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5]})
+    r = client.post("/cp_calc", json={"T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5]})
     assert r.json()["meta"]["zs_normalized"] is False
 
 
@@ -222,5 +222,5 @@ def test_a_large_data_set_is_fast():
 
 
 def test_other_endpoints_are_unaffected():
-    r = client.post("/eos_enthalpy_calc", json={"T_in": 300, "P_in": 101325, "T_out": 400, "P_out": 101325, "components": ["water"], "zs": [1]})
+    r = client.post("/eos_enthalpy_calc", json={"T_in": 300, "P_in": 101325, "T_out": 400, "P_out": 101325, "components": ["7732-18-5"], "zs": [1]})
     assert r.status_code == 200 and r.json()["data"]["duty"]["sp_duty"] == pytest.approx(2717.5448875208085, rel=1e-6)

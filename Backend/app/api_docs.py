@@ -28,7 +28,7 @@ The API offers **four groups of calculations**, grouped in this documentation:
 
 ### Conventions
 * All calculation endpoints use `POST` with a JSON body; send `Content-Type: application/json`.
-* Inputs of the stream calculations: temperature `T` in **K**, pressure `P` in **Pa**, `components` as names or CAS numbers, `zs` as **mole fractions** in the same order. If the fractions do not sum to 1 they are rescaled (`meta.zs_normalized` is then `true`). The Vent API takes opening and flow data instead (see its group description).
+* Inputs of the stream calculations: temperature `T` in **K**, pressure `P` in **Pa**, `components` as **CAS numbers only** (names are rejected), `zs` as **mole fractions** (not mole percent) in the same order. The fractions should add up to 1; a small difference is rescaled (`meta.zs_normalized` is then `true`). The Vent API takes opening and flow data instead (see its group description).
 * Units: heat capacity J/mol/K, molecular weight g/mol, density kg/m³, enthalpy and heat duty kJ/mol and kJ/kg, fractions are mole fractions. Every response contains a `units` object.
 * A phase that does not exist at the given conditions is returned as `null`. It is never `0`, and it is not an error.
 * Values are returned at full precision; round them in your client.
@@ -76,20 +76,20 @@ TAGS = [
     {
         "name": TAG_VENT,
         "description": (
-            "Flow as a function of valve opening. You supply measured points (`opening_values` in %, `flow_values` in any one "
-            "consistent unit) and a polynomial `degree`; the API fits the polynomial by least squares (equivalent to Excel "
+            "Flow as a function of valve opening. You supply measured points (`opening_values` in %, `flow_values` in the unit "
+            "of your data, for example kg/h) and a polynomial `degree`; the API fits the polynomial by least squares (equivalent to Excel "
             "`LINEST(Flow, Opening^{1..degree}, TRUE, TRUE)`) and returns the coefficients with their standard errors, R squared, "
             "the standard error of the estimate, the F statistic and the sums of squares, plus the flow estimated at each "
             "opening in `estimate_at`. The degree is reduced automatically to what the number of points supports. "
             "An estimate outside the fitted opening range is flagged as extrapolated and, by default, evaluated at the "
-            "nearest end of the range. Flow values returned are in the unit you supplied. "
+            "nearest end of the range. Every flow value in the response is in the unit you supplied; nothing is converted. "
             "This group has no components, temperature or pressure."
         ),
     },
     {"name": TAG_SYSTEM, "description": "Service status."},
 ]
 
-WATER_HEXANE = {"T": 300, "P": 101325, "components": ["water", "hexane"], "zs": [0.5, 0.5]}
+WATER_HEXANE = {"T": 300, "P": 101325, "components": ["7732-18-5", "110-54-3"], "zs": [0.5, 0.5]}  # water, hexane
 _FRACTION = "mole fraction"
 
 
@@ -120,20 +120,20 @@ unit, same length); `degree` (1 to 10); optionally `estimate_at` (openings in % 
 """.strip()
 
 COMMON_INPUT = """
-**Request.** `T` (K, above 0), `P` (Pa, above 0), `components` (names or CAS numbers, no duplicates) and `zs`
-(mole fractions, same length and order as `components`). See *Conventions* at the top of this page.
+**Request.** `T` (K, above 0), `P` (Pa, above 0), `components` (CAS numbers only, no duplicates) and `zs`
+(mole fractions, not mole percent, same length and order as `components`). See *Conventions* at the top of this page.
 """.strip()
 
 ENTHALPY_INPUT = """
 **Request.** `T_in` and `P_in` (inlet temperature in K and pressure in Pa), `T_out` and `P_out` (outlet temperature and
-pressure), all above 0; `components` (names or CAS numbers, no duplicates) and `zs` (mole fractions or mole percent,
-same length and order as `components`; they are rescaled to sum to 1). See *Conventions* at the top of this page.
+pressure), all above 0; `components` (CAS numbers only, no duplicates) and `zs` (mole fractions, not mole percent,
+same length and order as `components`; they should add up to 1). See *Conventions* at the top of this page.
 """.strip()
 
 LEAD_STREAM_REQUEST = {
     "T_in": 300, "P_in": 254920, "T_out": 368, "P_out": 254720,
     "components": ["74-82-8", "74-86-2", "74-85-1", "74-84-0", "74-99-7", "115-07-1", "74-98-6", "106-99-0", "106-98-9", "106-97-8"],
-    "zs": [0.02, 0.43, 60.6, 37.94, 0.01, 0.72, 0.14, 0.05, 0.05, 0.04],
+    "zs": [0.0002, 0.0043, 0.606, 0.3794, 0.0001, 0.0072, 0.0014, 0.0005, 0.0005, 0.0004],
 }
 
 ENDPOINT_DOCS: Dict[str, EndpointDoc] = {
@@ -194,7 +194,7 @@ all-vapor state; `Liquid_fraction = 1 − Vapor_fraction`.
 *organic* phase (all other components, renormalised). Each phase heat capacity is computed from the pure-component
 values in mole-fraction proportions. `Cp_mix = V·Cp_vapor + L·(x_water·Cp_aqueous + (1 − x_water)·Cp_organic)`.
 
-**Water is required** (`"water"` or `"7732-18-5"`); otherwise the error `water_required` is returned.
+**Water is required** (CAS `7732-18-5`); otherwise the error `water_required` is returned.
 A phase that does not exist is `null`.
 
 """ + COMMON_INPUT,
@@ -245,7 +245,7 @@ the other as *organic*; with a single liquid, it is *aqueous* if it is more than
 of the total mixture; the `beta` values of the existing phases sum to 1.
 
 **Components.** Water is optional. Components with a mole fraction of 0 are not part of the calculation
-(`n_components_used` shows how many were). Names and CAS numbers can be mixed; the same chemical given twice is merged.
+(`n_components_used` shows how many were).
 
 **Timing.** The first request for a new set of components builds the model (a few seconds for about 25 components);
 later requests for the same set take milliseconds.
@@ -275,8 +275,7 @@ A positive duty means heat is absorbed (heating or vaporisation), a negative dut
 `n_components_used` is the number of components that took part in the calculation.
 
 **Components.** Water is optional. Components with a negligible mole fraction (below 1e-12 after rescaling) are not
-part of the calculation, so lists with many zero entries are fast. Names and CAS numbers can be mixed; the same
-chemical given twice is merged.
+part of the calculation, so lists with many zero entries are fast.
 
 **Ethylene and ethane.** When both are present the binary interaction parameter of that pair is set to the calibrated
 value 0.015 instead of the database value 0.0078, which reproduces the plant reference duty of C2 streams much more
@@ -312,8 +311,8 @@ The fit also needs at least d + 1 different opening values; otherwise `fit_faile
 requested opening lies outside the fitted range. The flow is raised to `min_flow` (default 0) if the polynomial gives
 less, and `floor_applied` says so.
 
-**Units.** Openings are in %. Flow, `standard_error_y` and the coefficients are in the unit of the `flow_values` you
-supply; nothing is converted.
+**Units.** Openings are in %. You give the flow in the unit of your data (for example kg/h); `flow_values`, the
+coefficients, `standard_error_y` and every estimated flow in the response are in that same unit, and nothing is converted.
 
 """ + VENT_INPUT,
         VENT_REQUEST,

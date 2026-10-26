@@ -4,8 +4,7 @@ Adapted from the reference implementation supplied by the project lead
 (`analyze_stream`): one flash at T, P returns the vapor, aqueous and organic phases
 and the mixture properties. Differences from the reference, all for use behind an API:
 
-* components are normalised to CAS numbers (names such as "water" work, and the
-  water phase is always recognised);
+* components are CAS numbers (validated by the request model), so the water phase is always recognised;
 * components with a mole fraction of 0 are removed before the flash (the flash time
   grows steeply with the number of components, and results are unchanged);
 * components that resolve to the same chemical are merged;

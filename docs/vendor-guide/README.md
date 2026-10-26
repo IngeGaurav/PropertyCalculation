@@ -14,7 +14,7 @@ node build_guide.js ..\Thermo-API-Integration-Guide.docx examples.json
    (and the version number) to `examples.json`. It needs the Backend dependencies (`pip install -r Backend\requirements.txt`).
    It stops with an error if a documented request no longer works, which is a useful check in itself.
 2. `build_guide.js` builds the Word document: cover, overview, request/response format, errors, one page per endpoint,
-   health check, client examples. `npm install docx` is needed once. The explanatory text and the field tables are in
+   health check. `npm install docx` is needed once. The explanatory text and the field tables are in
    `build_guide.js`; edit them there when an endpoint changes (the page list is the `apis` array).
 3. Open the `.docx` in Word and choose *Save as PDF* (or *Export*) to refresh the `.pdf`.
 

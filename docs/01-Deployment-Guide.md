@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **System** | Thermo Property API (FastAPI backend + static web tester) |
-| **Version documented** | API 2.3.0 (initial deployment on 22 October 2026 was 2.0.0; upgrades in Appendices C, D and E) |
+| **Version documented** | API 3.0.0 (initial deployment on 22 October 2026 was 2.0.0; upgrades in Appendices C, D, E and F) |
 | **Deployed on** | Windows server `192.168.11.216` |
 | **Deployment date** | 22 October 2026 |
 | **Audience** | Developers and administrators who deploy, operate or update the service |
@@ -31,6 +31,7 @@
 16. [Appendix C — Upgrade from 2.0.0 to 2.1.0](#appendix-c--upgrade-from-200-to-210)
 17. [Appendix D — Upgrade from 2.1.0 to 2.2.0](#appendix-d--upgrade-from-210-to-220)
 18. [Appendix E — Upgrade from 2.2.0 to 2.3.0](#appendix-e--upgrade-from-220-to-230)
+19. [Appendix F — Upgrade from 2.3.0 to 3.0.0](#appendix-f--upgrade-from-230-to-300)
 
 ---
 
@@ -284,7 +285,7 @@ nssm start ThermoApi
 nssm status ThermoApi
 timeout /t 15 /nobreak
 curl.exe http://127.0.0.1:8000/health
-curl.exe -X POST http://127.0.0.1:8000/cp_calc -H "Content-Type: application/json" -d "{\"T\":350,\"P\":101325,\"components\":[\"water\",\"hexane\"],\"zs\":[0.5,0.5]}"
+curl.exe -X POST http://127.0.0.1:8000/cp_calc -H "Content-Type: application/json" -d "{\"T\":350,\"P\":101325,\"components\":[\"7732-18-5\",\"110-54-3\"],\"zs\":[0.5,0.5]}"
 type C:\thermo-api\logs\backend.log
 ```
 
@@ -397,11 +398,11 @@ Use this after the first deployment, after a server reboot, and after any signif
 | # | Check | Command / action | Expected |
 |---|---|---|---|
 | 1 | Backend service running | `nssm status ThermoApi` | `SERVICE_RUNNING` |
-| 2 | Backend answers locally | `curl.exe http://127.0.0.1:8000/health` | `{"status":"ok","version":"2.3.0"}` |
+| 2 | Backend answers locally | `curl.exe http://127.0.0.1:8000/health` | `{"status":"ok","version":"3.0.0"}` |
 | 3 | nginx running | `nssm status nginx` | `SERVICE_RUNNING` |
 | 4 | Site and API through nginx | `curl.exe http://localhost:4300/api/health` | same JSON as above |
 | 5 | Existing sites unaffected | `curl.exe -I http://localhost:4200/` and `...:3000/` | `HTTP/1.1 200 OK` |
-| 6 | Network access | Browser on another PC: `http://192.168.11.216:4300/` | Page loads, status bar shows *connected · API v2.3.0* |
+| 6 | Network access | Browser on another PC: `http://192.168.11.216:4300/` | Page loads, status bar shows *connected · API v3.0.0* |
 | 7 | All APIs | Web tester, tab *Property APIs*: each of the 7 entries → *Load example* → *Calculate*. Tabs *EOS Stream API*, *Enthalpy API* and *Vent API*: *Calculate* | Result tables, no error |
 | 8 | Postman | `POST http://192.168.11.216:4300/api/cp_calc` with JSON body | `"status":"success"` |
 | 9 | Auto-start (recommended) | `sc qc ThermoApi` and `sc qc nginx` | `START_TYPE : 2 AUTO_START` |
@@ -524,7 +525,7 @@ type C:\thermo-api\logs\backend.log
 
 **Do not restart if the tests fail** — fix the problem or roll back (§9.9). The running service keeps working with the old code until you restart it.
 
-**Making the new version visible:** the version number is defined in `Backend\main.py` (`version="2.3.0"`) and is returned by `/api/health` and shown in the web tester's status bar. Increase it with each release (for example `2.3.1`) so that you can confirm from any browser that the new code is live.
+**Making the new version visible:** the version number is defined in `Backend\main.py` (`version="3.0.0"`) and is returned by `/api/health` and shown in the web tester's status bar. Increase it with each release (for example `2.3.1`) so that you can confirm from any browser that the new code is live.
 
 ### 9.4 When the dependencies change
 
@@ -747,7 +748,7 @@ nssm start ThermoApi
 nssm status ThermoApi
 timeout /t 15 /nobreak
 curl.exe http://127.0.0.1:8000/health
-curl.exe -X POST http://127.0.0.1:8000/cp_calc -H "Content-Type: application/json" -d "{\"T\":350,\"P\":101325,\"components\":[\"water\",\"hexane\"],\"zs\":[0.5,0.5]}"
+curl.exe -X POST http://127.0.0.1:8000/cp_calc -H "Content-Type: application/json" -d "{\"T\":350,\"P\":101325,\"components\":[\"7732-18-5\",\"110-54-3\"],\"zs\":[0.5,0.5]}"
 type C:\thermo-api\logs\backend.log
 
 :: --- Step 8: locate nginx ---
@@ -862,7 +863,7 @@ cd C:\thermo-api\Backend
 nssm restart ThermoApi
 timeout /t 15 /nobreak
 curl.exe http://127.0.0.1:8000/health
-curl.exe -X POST http://127.0.0.1:8000/eos_stream_calc -H "Content-Type: application/json" -d "{\"T\":300,\"P\":101325,\"components\":[\"water\",\"hexane\"],\"zs\":[0.5,0.5]}"
+curl.exe -X POST http://127.0.0.1:8000/eos_stream_calc -H "Content-Type: application/json" -d "{\"T\":300,\"P\":101325,\"components\":[\"7732-18-5\",\"110-54-3\"],\"zs\":[0.5,0.5]}"
 curl.exe -o NUL -s -w "%{http_code}" -X POST http://127.0.0.1:8000/enthalpy_calc -H "Content-Type: application/json" -d "{}"
 ```
 Expected: `{"status":"ok","version":"2.1.0"}`; a JSON response whose `data.case` is `two-phase liquid-liquid (LL, aqueous+organic)`; and `404` for the removed enthalpy endpoint.
@@ -930,7 +931,7 @@ cd C:\thermo-api\Backend
 nssm restart ThermoApi
 timeout /t 15 /nobreak
 curl.exe http://127.0.0.1:8000/health
-curl.exe -X POST http://127.0.0.1:8000/eos_enthalpy_calc -H "Content-Type: application/json" -d "{\"T_in\":300,\"P_in\":101325,\"T_out\":400,\"P_out\":101325,\"components\":[\"water\"],\"zs\":[1]}"
+curl.exe -X POST http://127.0.0.1:8000/eos_enthalpy_calc -H "Content-Type: application/json" -d "{\"T_in\":300,\"P_in\":101325,\"T_out\":400,\"P_out\":101325,\"components\":[\"7732-18-5\"],\"zs\":[1]}"
 ```
 Expected: `{"status":"ok","version":"2.2.0"}`, and a response in which `duty.sp_duty` is `2717.545` (kJ/kg) and the outlet `vapor_fraction` is `1.0`.
 
@@ -1001,9 +1002,29 @@ curl.exe -X POST http://127.0.0.1:8000/vent_flow_calc -H "Content-Type: applicat
 ```
 Expected: `{"status":"ok","version":"2.3.0"}`, and a response with `fit.degree_used` 1, `fit.degree_capped` true and the estimate at 50 % equal to `123073.8`.
 
-**5. Check the page.** Open `http://192.168.11.216:4300/`, press `Ctrl+F5`, confirm that the status bar shows *connected · API v2.3.0*, and press *Calculate* on the *Vent API* tab (equation `Flow(Opening) = +2458.61*Opening +143.197`).
+**5. Check the page.** Open `http://192.168.11.216:4300/`, press `Ctrl+F5`, confirm that the status bar shows *connected · API v3.0.0*, and press *Calculate* on the *Vent API* tab (equation `Flow(Opening) = +2458.61*Opening +143.197`).
 
 ### Things to know after the upgrade
 
 - The Vent API does not use the equation-of-state models, so it needs no warm-up and does not touch the model cache.
 - Rolling back: restore the backup with the command in §9.9 and restart the service.
+
+---
+
+## Appendix F — Upgrade from 2.3.0 to 3.0.0
+
+Release 3.0.0 accepts **CAS numbers only** as components (names are rejected with HTTP 422), documents `zs` as **mole fractions** and states that the Vent API returns flows in the unit the user entered. Notify API users before the upgrade, because a client that sends names will receive errors.
+
+**1.** Stop the service so no file is locked: `nssm stop ThermoApi`.
+
+**2.** Replace `Backend\app\*.py`, `Backend\main.py`, `Backend\tests\*` and `Frontend\index.html` with the new versions (the dependency list is unchanged; no `pip install` is needed).
+
+**3.** Start the service: `nssm start ThermoApi`. (nginx needs no change.)
+
+**4.** Check the version: `curl.exe http://127.0.0.1:8000/health` returns `{"status":"ok","version":"3.0.0"}`.
+
+**5.** Check the new rule. A request with `"components":["water","hexane"]` to `/eos_stream_calc` must return HTTP 422 with `error.code` `validation_error`, and the same request with `["7732-18-5","110-54-3"]` must return HTTP 200.
+
+**6.** Open `http://192.168.11.216:4300/`, press `Ctrl+F5` and confirm *connected · API v3.0.0*. Optionally run the tests (`python -m pytest -q tests`, expected `236 passed`).
+
+**Rollback:** restore the previous `Backend` and `Frontend` folders and run `nssm restart ThermoApi`.

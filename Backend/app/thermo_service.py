@@ -45,12 +45,12 @@ class Compound:
 
 @lru_cache(maxsize=1024)
 def identify(name: str) -> Compound:
-    """Resolve a name / CAS to constants that do not depend on T or P (cached)."""
+    """Resolve a CAS number to constants that do not depend on T or P (cached)."""
     try:
         chem = Chemical(name)
     except Exception as exc:
         raise UnknownComponentError(
-            f"Component '{name}' was not recognised.", details={"component": name}
+            f"CAS number '{name}' was not found in the component database.", details={"component": name}
         ) from exc
     if chem.MW is None:
         raise PropertyUnavailableError(
@@ -173,7 +173,7 @@ def triphase(req: CPCalcInput) -> Triphase:
     cas = [c.cas for c in st.compounds]
     if WATER_CAS not in cas:
         raise MissingWaterError(
-            "Triphase endpoints require water in the mixture (use 'water' or '7732-18-5')."
+            "Triphase endpoints require water (CAS 7732-18-5) in the mixture."
         )
     idx = cas.index(WATER_CAS)
 
