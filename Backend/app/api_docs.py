@@ -10,6 +10,7 @@ TAG_PROPERTY = "Property APIs"
 TAG_EOS = "EOS Stream API"
 TAG_ENTHALPY = "Enthalpy API"
 TAG_VENT = "Vent API"
+TAG_CPCURVE = "Cp vs Temperature API"
 TAG_SYSTEM = "System"
 
 API_TITLE = "Thermo Property API"
@@ -84,6 +85,17 @@ TAGS = [
             "An estimate outside the fitted opening range is flagged as extrapolated and, by default, evaluated at the "
             "nearest end of the range. Every flow value in the response is in the unit you supplied; nothing is converted. "
             "This group has no components, temperature or pressure."
+        ),
+    },
+    {
+        "name": TAG_CPCURVE,
+        "description": (
+            "Heat capacity of a stream at one pressure over a range of temperatures. You give `P`, the components (CAS numbers) "
+            "with their mole fractions, the first temperature `T_start`, the last temperature `T_end` (default 2273 K) and the "
+            "step `interval` in K (for example 10). The API runs the same Peng-Robinson three-phase flash as the EOS Stream API "
+            "at every temperature and returns a table: temperature, phase situation, vapor fraction, molecular weight and "
+            "mixture heat capacity in J/mol/K and kJ/kg/K. A temperature at which the flash fails is returned with `Cp` null "
+            "and the reason in `error`; the other temperatures are still returned. At most 1000 temperatures per request."
         ),
     },
     {"name": TAG_SYSTEM, "description": "Service status."},
@@ -287,6 +299,30 @@ requests for the same set take milliseconds.
 """ + ENTHALPY_INPUT,
         LEAD_STREAM_REQUEST,
         {"inlet": {"vapor_fraction": 1.0, "molecular_weight": 28.97064, "enthalpy_molar": -0.04241087, "enthalpy_mass": -1.463926}, "outlet": {"vapor_fraction": 1.0, "molecular_weight": 28.97064, "enthalpy_molar": 3.439142, "enthalpy_mass": 118.7113}, "duty": {"heat_duty_molar": 3.481552, "sp_duty": 120.1752}, "n_components_used": 10, "ethylene_ethane_kij_override": True},
+    ),
+    "/eos_cp_curve_calc": EndpointDoc(
+        "eos_cp_curve", TAG_CPCURVE, "Heat capacity versus temperature",
+        """Returns the heat capacity of a stream at every temperature from `T_start` to `T_end` in steps of `interval`, at one pressure.
+
+**Method.** The Peng-Robinson three-phase flash of the EOS Stream API is performed at each temperature
+(`T_start`, `T_start + interval`, `T_start + 2·interval`, ...; the last temperature is the largest one not above `T_end`).
+Phase changes along the range are therefore included: `Cp` is the heat capacity of the whole mixture, `case` and `V`
+show which phases exist at that temperature.
+
+**Response.** `points` is the table, one row per temperature: `T` (K), `case`, `V` (mole fraction vapor), `Cp` (J/mol/K),
+`Cp_mass_kJ_kgK` (kJ/kg/K), `Cp_kcal_kmolK` (kcal/kmol/K), `Cp_mass_kcal_kgK` (kcal/kg/K) and `MW` (g/mol). The kcal values are the J and kJ values divided by 4.184. `T_end` in `data` is the last temperature actually calculated.
+
+**Failed temperatures.** If the flash does not work at a temperature, that row has `Cp` null and the reason in `error`;
+the rest of the table is returned and `n_failed` counts them. If every temperature fails, the call returns `flash_failed`.
+
+**Limits.** `T_end` must not be below `T_start`; at most 1000 temperatures per request (use a larger `interval` otherwise).
+
+**Request.** `P` (Pa, above 0), `T_start`, `T_end` and `interval` (K, above 0), `components` (CAS numbers only, no duplicates)
+and `zs` (mole fractions, not mole percent, same length and order as `components`). See *Conventions* at the top of this page.
+
+""",
+        {"P": 101325, "components": ["74-82-8", "74-84-0"], "zs": [0.5, 0.5], "T_start": 300, "T_end": 330, "interval": 10},
+        {'n_points': 4, 'n_failed': 0, 'n_components_used': 2, 'T_start': 300.0, 'T_end': 330.0, 'interval': 10.0, 'points': [{'T': 300.0, 'case': 'vapor-only', 'V': 1.0, 'Cp': 44.41757, 'Cp_mass_kJ_kgK': 1.926529, 'Cp_kcal_kmolK': 10.61605, 'Cp_mass_kcal_kgK': 0.4604515, 'MW': 23.05575, 'error': None}, {'T': 310.0, 'case': 'vapor-only', 'V': 1.0, 'Cp': 45.21018, 'Cp_mass_kJ_kgK': 1.960907, 'Cp_kcal_kmolK': 10.80549, 'Cp_mass_kcal_kgK': 0.468668, 'MW': 23.05575, 'error': None}, {'T': 320.0, 'case': 'vapor-only', 'V': 1.0, 'Cp': 46.0269, 'Cp_mass_kJ_kgK': 1.99633, 'Cp_kcal_kmolK': 11.00069, 'Cp_mass_kcal_kgK': 0.4771344, 'MW': 23.05575, 'error': None}, {'T': 330.0, 'case': 'vapor-only', 'V': 1.0, 'Cp': 46.86496, 'Cp_mass_kJ_kgK': 2.03268, 'Cp_kcal_kmolK': 11.20099, 'Cp_mass_kcal_kgK': 0.4858222, 'MW': 23.05575, 'error': None}]},
     ),
     "/vent_flow_calc": EndpointDoc(
         "vent_flow", TAG_VENT, "Flow versus opening: polynomial fit and flow estimate",

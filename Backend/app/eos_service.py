@@ -169,20 +169,24 @@ def _phase(res, phase) -> Optional[EosPhase]:
     )
 
 
-def eos_stream(req: CPCalcInput) -> EosStreamData:
+def prepare(req: CPCalcInput) -> Tuple[Tuple[str, ...], List[float]]:
+    """Validated request -> sorted CAS tuple and normalised mole fractions (zero fractions dropped, duplicates merged)."""
     for name in req.components:  # validates every name first (also for zero-fraction ones)
         identify(name)
     merged = _merge_by_cas(req)
     cas = tuple(sorted(merged))
     total = sum(merged.values())
-    zs = [merged[c] / total for c in cas]
+    return cas, [merged[c] / total for c in cas]
 
-    entry = _get_entry(cas)
 
+def stream_at(entry: _Entry, cas: Tuple[str, ...], zs: List[float], T: float, P: float) -> EosStreamData:
+    """One flash of an already prepared stream at T, P (the model is looked up once by the caller)."""
     try:
         with entry.lock:
-            res = entry.flasher.flash(T=req.T, P=req.P, zs=zs)
+            res = entry.flasher.flash(T=T, P=P, zs=zs)
             vapor_phase = res.gas
+            if vapor_phase is None:  # above the critical region thermo reports a single phase as liquid-like; a gas-type root is vapor
+                vapor_phase = next((p for p in res.phases if isinstance(p, CEOSGas)), None)
             liquid_phases = [p for p in res.phases if p is not vapor_phase]
 
             water_idx = cas.index(WATER_CAS) if WATER_CAS in cas else None
@@ -201,6 +205,8 @@ def eos_stream(req: CPCalcInput) -> EosStreamData:
 
             vf = res.VF
             V = float(vf) if vf is not None and not math.isnan(vf) else 0.0
+            if vapor_phase is not None and res.gas is None:
+                V = float(res.betas[res.phases.index(vapor_phase)])
             data = EosStreamData(
                 case=describe_case(vapor_phase is not None, aqueous_phase is not None, organic_phase is not None),
                 V=V,
@@ -221,5 +227,10 @@ def eos_stream(req: CPCalcInput) -> EosStreamData:
     except (FlashError, CalculationError, PropertyUnavailableError):
         raise
     except Exception as exc:
-        raise FlashError(f"Equation-of-state flash failed at T={req.T:g} K, P={req.P:g} Pa: {exc}") from exc
+        raise FlashError(f"Equation-of-state flash failed at T={T:g} K, P={P:g} Pa: {exc}") from exc
     return data
+
+
+def eos_stream(req: CPCalcInput) -> EosStreamData:
+    cas, zs = prepare(req)
+    return stream_at(_get_entry(cas), cas, zs, req.T, req.P)

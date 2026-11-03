@@ -13,7 +13,8 @@ PROPERTY_PATHS = ["/cp_calc", "/density_calc", "/mw_calc", "/vf_calc",
 EOS_PATHS = ["/eos_stream_calc"]
 ENTHALPY_PATHS = ["/eos_enthalpy_calc"]
 VENT_PATHS = ["/vent_flow_calc"]
-ALL_CALC = PROPERTY_PATHS + EOS_PATHS + ENTHALPY_PATHS + VENT_PATHS
+CP_CURVE_PATHS = ["/eos_cp_curve_calc"]
+ALL_CALC = PROPERTY_PATHS + EOS_PATHS + ENTHALPY_PATHS + VENT_PATHS + CP_CURVE_PATHS
 
 
 def op(path, method="post"):
@@ -36,7 +37,7 @@ def test_page_metadata():
     assert info["title"] == "Thermo Property API"
     assert info["version"] == client.get("/health").json()["version"]
     assert all(g in info["description"] for g in ("Property APIs", "EOS Stream API", "Enthalpy API", "Vent API"))
-    assert [t["name"] for t in SPEC["tags"]] == [api_docs.TAG_PROPERTY, api_docs.TAG_EOS, api_docs.TAG_ENTHALPY, api_docs.TAG_VENT, api_docs.TAG_SYSTEM]
+    assert [t["name"] for t in SPEC["tags"]] == [api_docs.TAG_PROPERTY, api_docs.TAG_EOS, api_docs.TAG_ENTHALPY, api_docs.TAG_VENT, api_docs.TAG_CPCURVE, api_docs.TAG_SYSTEM]
     assert all(t["description"] for t in SPEC["tags"])
 
 

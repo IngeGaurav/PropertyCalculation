@@ -103,6 +103,10 @@
   .badge.ok { background: var(--ok-bg); color: var(--ok); }
   .badge.err { background: var(--err-bg); color: var(--err); }
   .meta { font-size: 12px; color: var(--muted); margin-left: 8px; }
+  .scrolltable { max-height: 520px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin: 10px 0; }
+  .scrolltable table.out { margin: 0; }
+  .scrolltable thead th { position: sticky; top: 0; background: var(--panel); box-shadow: 0 1px 0 var(--border); }
+  table.out tr.failed td { background: var(--err-bg); color: var(--err); }
   table.out { width: 100%; border-collapse: collapse; margin: 10px 0; }
   table.out th, table.out td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
   table.out th { font-size: 12px; color: var(--muted); font-weight: 500; }
@@ -142,6 +146,7 @@
     <button type="button" id="tabEos" role="tab">EOS Stream API<small>Complete stream result · Peng-Robinson, three-phase flash</small></button>
     <button type="button" id="tabEnth" role="tab">Enthalpy API<small>Enthalpy at inlet and outlet · heat duty</small></button>
     <button type="button" id="tabVent" role="tab">Vent API<small>Flow vs opening · polynomial fit</small></button>
+    <button type="button" id="tabCp" role="tab">Cp vs Temperature API<small>Heat capacity table · temperature range and step</small></button>
   </div>
 </div>
 
@@ -157,6 +162,9 @@
 </div>
 <div class="layout" id="ventPane" hidden>
   <main id="ventMain"></main>
+</div>
+<div class="layout" id="cpPane" hidden>
+  <main id="cpMain"></main>
 </div>
 
 <script>
@@ -242,6 +250,33 @@ const ENTH_EP = {
     { label: "Water/hexane, heating", vals: { T_in: 300, P_in: 101325, T_out: 380, P_out: 101325 }, comps: [["7732-18-5", 0.5], ["110-54-3", 0.5]] },
     { label: "Cooling: C2 stream 368 K to 300 K", vals: { T_in: 368, P_in: 254720, T_out: 300, P_out: 254920 }, comps: C2_STREAM },
     { label: "Full 48-component list (mole fractions)", vals: C2_COND, comps: LEAD_COMPONENTS.map((c, i) => [c, LEAD_FRAC[i]]) },
+  ],
+};
+
+const CP_COND = { P: 101325, T_start: 300, T_end: 2273, interval: 10 };
+const CP_EP = {
+  path: "/eos_cp_curve_calc", title: "Heat capacity versus temperature", render: showCpCurve,
+  fields: [
+    { key: "P", label: "Pressure P (Pa)" },
+    { key: "T_start", label: "Start temperature T_start (K)" },
+    { key: "T_end", label: "End temperature T_end (K)" },
+    { key: "interval", label: "Temperature interval (K)" },
+  ],
+  check: b => {
+    if (b.T_end < b.T_start) return "End temperature must not be below the start temperature.";
+    const n = Math.floor((b.T_end - b.T_start) / b.interval + 1e-9) + 1;
+    return n > 1000 ? `That range gives ${n} temperatures; the maximum is 1000. Use a larger interval or a smaller range.` : null;
+  },
+  desc: "Heat capacity of a stream at one pressure over a range of temperatures. Give the pressure, the start temperature, the end temperature " +
+        "(2273 K by default) and the step, for example 10 K, together with the components (CAS numbers) and their mole fractions (not mole percent, adding up to 1). " +
+        "The Peng-Robinson three-phase flash of the EOS Stream API is run at every temperature, so a phase change along the range is included. " +
+        "A temperature where the flash fails is shown in red and the other rows are still returned. At most 1000 temperatures per request.",
+  ex: { vals: CP_COND, comps: [["74-82-8", 0.5], ["74-84-0", 0.5]] },
+  examples: [
+    { label: "Pure methane", vals: CP_COND, comps: [["74-82-8", 1]] },
+    { label: "Water (liquid, vapor)", vals: { P: 101325, T_start: 280, T_end: 2273, interval: 10 }, comps: [["7732-18-5", 1]] },
+    { label: "Water/hexane 280 to 700 K", vals: { P: 101325, T_start: 280, T_end: 700, interval: 10 }, comps: [["7732-18-5", 0.5], ["110-54-3", 0.5]] },
+    { label: "C2 stream, 5 K step", vals: { P: 254920, T_start: 300, T_end: 1000, interval: 5 }, comps: C2_STREAM },
   ],
 };
 
@@ -419,6 +454,8 @@ function clientCheck(b, ep) {
   for (const f of (ep.fields || PT_FIELDS)) {
     if (!(b[f.key] > 0)) return `${f.label} must be a number greater than 0.`;
   }
+  const extra = ep.check && ep.check(b);
+  if (extra) return extra;
   if (!b.components.length) return "Add at least one component.";
   if (b.components.some(n => !n)) return "Every component needs a CAS number.";
   if (b.zs.some(z => Number.isNaN(z))) return "Every component needs a mole fraction.";
@@ -528,6 +565,55 @@ function showEnthalpy(box, json, body, status, ms) {
   box.append(table);
   box.append(el("div", { class: "note" }, `Components in the calculation: ${d.n_components_used} of ${body.components.length}.` +
     (d.ethylene_ethane_kij_override ? " The calibrated ethylene–ethane interaction parameter (0.015) was applied." : "")));
+  if (json.meta.zs_normalized) box.append(el("div", { class: "note" }, "Your mole fractions did not sum to 1, so the API rescaled them."));
+  box.append(requestBlock(body, { status, json }));
+}
+
+function showCpCurve(box, json, body, status, ms) {
+  box.hidden = false; box.replaceChildren();
+  const d = json.data;
+  box.append(el("div", {}, el("span", { class: "badge ok" }, "Success · HTTP " + status),
+    el("span", { class: "meta" }, `${ms.toFixed(0)} ms round-trip · server ${json.meta.elapsed_ms} ms · request ${json.meta.request_id}`)));
+  const ok = d.points.filter(p => isNum(p.Cp));
+  const lo = ok.reduce((a, p) => p.Cp < a.Cp ? p : a, ok[0]), hi = ok.reduce((a, p) => p.Cp > a.Cp ? p : a, ok[0]);
+  box.append(el("div", { class: "summary-line" },
+    el("span", {}, el("strong", {}, "Temperatures: "), `${d.n_points} (${g4(d.T_start)} K to ${g4(d.T_end)} K, step ${g4(d.interval)} K)`),
+    el("span", {}, el("strong", {}, "Pressure: "), `${g4(body.P)} Pa`),
+    el("span", {}, el("strong", {}, "Components flashed: "), `${d.n_components_used} of ${body.components.length}`),
+    ...(ok.length ? [el("span", {}, el("strong", {}, "Cp range: "), `${g4(lo.Cp)} (${g4(lo.T)} K) to ${g4(hi.Cp)} J/mol/K (${g4(hi.T)} K)`)] : []),
+    ...(d.n_failed ? [el("span", {}, el("strong", {}, "Failed: "), String(d.n_failed))] : [])));
+
+  const cols = ["T (K)", "Phase situation", "V (mole fraction)", "Cp (J/mol/K)", "Cp (kJ/kg/K)", "Cp (kcal/kmol/K)", "Cp (kcal/kg/K)", "MW (g/mol)"];
+  const table = el("table", { class: "out" }, el("thead", {}, el("tr", {},
+    ...cols.map((c, i) => el("th", { class: i === 1 ? "" : "r" }, c)))));
+  const tb = el("tbody");
+  for (const p of d.points) {
+    if (p.error) {
+      tb.append(el("tr", { class: "failed" }, el("td", { class: "num r" }, g4(p.T)), el("td", { colspan: "7" }, "Calculation failed: " + p.error)));
+      continue;
+    }
+    tb.append(el("tr", {}, el("td", { class: "num r" }, g4(p.T)), el("td", {}, p.case),
+      el("td", { class: "num r" }, g4(p.V)), el("td", { class: "num r" }, g4(p.Cp)),
+      el("td", { class: "num r" }, g4(p.Cp_mass_kJ_kgK)), el("td", { class: "num r" }, g4(p.Cp_kcal_kmolK)),
+      el("td", { class: "num r" }, g4(p.Cp_mass_kcal_kgK)), el("td", { class: "num r" }, g4(p.MW))));
+  }
+  table.append(tb);
+
+  const NL = String.fromCharCode(10), TAB = String.fromCharCode(9);
+  const rowsOf = () => d.points.map(p => [p.T, p.case ?? "", p.V ?? "", p.Cp ?? "", p.Cp_mass_kJ_kgK ?? "", p.Cp_kcal_kmolK ?? "", p.Cp_mass_kcal_kgK ?? "", p.MW ?? "", p.error ?? ""]);
+  const head = ["T_K", "case", "V", "Cp_J_per_mol_K", "Cp_kJ_per_kg_K", "Cp_kcal_per_kmol_K", "Cp_kcal_per_kg_K", "MW_g_per_mol", "error"];
+  const csv = () => [head, ...rowsOf()].map(r => r.map(v => `"${String(v).split('"').join('""')}"`).join(",")).join(NL);
+  const download = el("button", { type: "button", onclick: () => {
+    const a = el("a", { href: URL.createObjectURL(new Blob([csv()], { type: "text/csv" })), download: "cp_vs_temperature.csv" });
+    document.body.append(a); a.click(); a.remove();
+  } }, "Download CSV");
+  const copy = el("button", { type: "button", onclick: async () => {
+    try { await navigator.clipboard.writeText([head, ...rowsOf()].map(r => r.join(TAB)).join(NL)); copy.textContent = "Copied"; }
+    catch { copy.textContent = "Copy not allowed here"; }
+    setTimeout(() => { copy.textContent = "Copy table"; }, 1800);
+  } }, "Copy table");
+  box.append(el("div", { class: "actions" }, download, copy), el("div", { class: "scrolltable" }, table));
+  box.append(el("div", { class: "note" }, "Cp is the heat capacity of the whole mixture. The phase situation and V show which phases exist at each temperature."));
   if (json.meta.zs_normalized) box.append(el("div", { class: "note" }, "Your mole fractions did not sum to 1, so the API rescaled them."));
   box.append(requestBlock(body, { status, json }));
 }
@@ -781,7 +867,12 @@ $("#enthMain").append(enthSection);
 // ---------------------------------------------------------- tab 4: Vent API
 $("#ventMain").append((() => { const v = buildVentSection(); v.classList.add("active"); return v; })());
 
-const MODES = { prop: ["#propPane", "#tabProp"], eos: ["#eosPane", "#tabEos"], enth: ["#enthPane", "#tabEnth"], vent: ["#ventPane", "#tabVent"] };
+// ---------------------------------------------------------- tab 5: Cp vs Temperature API
+const cpSection = buildSection(CP_EP, 102);
+cpSection.classList.add("active");
+$("#cpMain").append(cpSection);
+
+const MODES = { prop: ["#propPane", "#tabProp"], eos: ["#eosPane", "#tabEos"], enth: ["#enthPane", "#tabEnth"], vent: ["#ventPane", "#tabVent"], cp: ["#cpPane", "#tabCp"] };
 function setMode(m) {
   for (const [name, [pane, tab]] of Object.entries(MODES)) {
     $(pane).hidden = name !== m;

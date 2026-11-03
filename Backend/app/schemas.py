@@ -10,6 +10,8 @@ from .config import settings
 
 T_ = TypeVar("T_")
 
+MAX_CURVE_POINTS = 1000  # temperatures in one Cp-versus-temperature request
+
 
 # ----------------------------------------------------------------- requests
 _CAS_FORMAT = re.compile(r"^\d{2,7}-\d{2}-\d$")
@@ -99,6 +101,28 @@ class EnthalpyDutyInput(Composition):
     P_in: float = Field(254920.0, gt=0, allow_inf_nan=False, description="Inlet pressure, Pa")
     T_out: float = Field(368.0, gt=0, allow_inf_nan=False, description="Outlet temperature, K")
     P_out: float = Field(254720.0, gt=0, allow_inf_nan=False, description="Outlet pressure, Pa")
+
+
+class CpCurveInput(Composition):
+    """Stream composition and pressure, with a temperature range and step: heat capacity is calculated at every step."""
+
+    P: float = Field(101325.0, gt=0, allow_inf_nan=False, description="Pressure, Pa (the same at every temperature)")
+    T_start: float = Field(300.0, gt=0, allow_inf_nan=False, description="First temperature, K")
+    T_end: float = Field(2273.0, gt=0, allow_inf_nan=False, description="Last temperature, K (default 2273 K)")
+    interval: float = Field(10.0, gt=0, allow_inf_nan=False, description="Temperature step, K")
+
+    @model_validator(mode="after")
+    def _check_range(self):
+        if self.T_end < self.T_start:
+            raise ValueError(f"T_end ({self.T_end:g}) must not be below T_start ({self.T_start:g})")
+        n = int(math.floor((self.T_end - self.T_start) / self.interval + 1e-9)) + 1
+        if n > MAX_CURVE_POINTS:
+            raise ValueError(f"the range gives {n} temperatures; the maximum is {MAX_CURVE_POINTS}. Use a larger interval or a smaller range")
+        return self
+
+    def temperatures(self) -> List[float]:
+        n = int(math.floor((self.T_end - self.T_start) / self.interval + 1e-9)) + 1
+        return [round(self.T_start + i * self.interval, 10) for i in range(n)]
 
 
 class VentFlowInput(BaseModel):
@@ -206,6 +230,29 @@ class EosStreamData(BaseModel):
     aqueous: Optional[EosPhase] = Field(None, description="null when there is no aqueous liquid")
     organic: Optional[EosPhase] = Field(None, description="null when there is no organic liquid")
     mixture: EosMixture
+
+
+# ------------------------------------------------------ Cp versus temperature
+class CpCurvePoint(BaseModel):
+    T: float = Field(description="K")
+    case: Optional[str] = Field(None, description="phase situation at this temperature (same wording as the EOS Stream API); null if the calculation failed")
+    V: Optional[float] = Field(None, description="vapor fraction (mole)")
+    Cp: Optional[float] = Field(None, description="mixture heat capacity, J/mol/K; null if the calculation failed")
+    Cp_mass_kJ_kgK: Optional[float] = Field(None, description="mixture heat capacity, kJ/kg/K")
+    Cp_kcal_kmolK: Optional[float] = Field(None, description="mixture heat capacity, kcal/kmol/K (thermochemical calorie, 4.184 J)")
+    Cp_mass_kcal_kgK: Optional[float] = Field(None, description="mixture heat capacity, kcal/kg/K")
+    MW: Optional[float] = Field(None, description="mixture molecular weight, g/mol")
+    error: Optional[str] = Field(None, description="reason, only when the calculation failed at this temperature")
+
+
+class CpCurveData(BaseModel):
+    n_points: int = Field(description="number of temperatures calculated")
+    n_failed: int = Field(description="temperatures at which the calculation failed (Cp is null there)")
+    n_components_used: int = Field(description="components with a mole fraction above 0")
+    T_start: float
+    T_end: float = Field(description="last temperature actually calculated, K (the largest start + n * interval not above the requested end)")
+    interval: float
+    points: List[CpCurvePoint]
 
 
 # ------------------------------------------------------ Enthalpy / heat duty
@@ -338,6 +385,12 @@ VENT_UNITS = {
     "f_statistic": "dimensionless", "df_residual": "count", "n_points": "count",
     "degree_requested": "count", "degree_used": "count",
     "ss_regression": "(flow unit)^2", "ss_residual": "(flow unit)^2",
+}
+CP_CURVE_UNITS = {
+    "T": "K", "P": "Pa", "interval": "K", "T_start": "K", "T_end": "K", "V": "mole fraction",
+    "Cp": "J/mol/K", "Cp_mass_kJ_kgK": "kJ/kg/K", "Cp_kcal_kmolK": "kcal/kmol/K",
+    "Cp_mass_kcal_kgK": "kcal/kg/K", "MW": "g/mol", "n_points": "count", "n_failed": "count",
+    "n_components_used": "count",
 }
 EOS_UNITS = {
     "V": "mole fraction", "L": "mole fraction", "n_phases": "count", "n_components_used": "count",

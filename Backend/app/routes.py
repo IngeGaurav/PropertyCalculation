@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from . import api_docs as docs
+from . import cp_curve_service as cpcurve
 from . import enthalpy_service as enth
 from . import eos_service as eos
 from . import schemas as s
@@ -102,3 +103,6 @@ _endpoint("/eos_enthalpy_calc", enth.eos_enthalpy, s.EnthalpyDutyData, s.ENTHALP
 
 # --- Vent API: polynomial fit of flow versus valve opening, and flow estimates (no composition involved) ---
 _endpoint("/vent_flow_calc", vent.vent_flow, s.VentFlowData, s.VENT_UNITS, s.VentFlowInput)
+
+# --- Cp versus temperature API: the EOS stream calculation repeated over a temperature range ---
+_endpoint("/eos_cp_curve_calc", cpcurve.cp_curve, s.CpCurveData, s.CP_CURVE_UNITS, s.CpCurveInput)
